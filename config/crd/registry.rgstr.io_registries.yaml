@@ -1,0 +1,169 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: registries.registry.rgstr.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.0
+spec:
+  group: registry.rgstr.io
+  names:
+    kind: Registry
+    listKind: RegistryList
+    plural: registries
+    singular: registry
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Ready
+          type: boolean
+          jsonPath: .status.ready
+        - name: Service
+          type: string
+          jsonPath: .status.serviceName
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          description: Registry is the Schema for the registries API.
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: RegistrySpec defines the desired state of Registry.
+              type: object
+              properties:
+                image:
+                  description: "Image is the rgstr container image. Defaults to ghcr.io/piqab/rgstr:latest."
+                  type: string
+                replicas:
+                  description: Replicas is the number of registry pods. Defaults to 1.
+                  type: integer
+                  format: int32
+                  default: 1
+                  minimum: 0
+                port:
+                  description: Port the registry listens on. Defaults to 5000.
+                  type: integer
+                  format: int32
+                  default: 5000
+                serviceType:
+                  description: "ServiceType is the Kubernetes Service type. Defaults to ClusterIP."
+                  type: string
+                  default: ClusterIP
+                  enum: [ClusterIP, NodePort, LoadBalancer]
+                storage:
+                  description: Storage configures the PVC for registry data.
+                  type: object
+                  properties:
+                    size:
+                      description: "Size is the storage request. Defaults to 10Gi."
+                      type: string
+                      default: "10Gi"
+                    storageClassName:
+                      description: StorageClass to use. Uses default class if omitted.
+                      type: string
+                    accessModes:
+                      description: "AccessModes defaults to [ReadWriteOnce]."
+                      type: array
+                      items:
+                        type: string
+                auth:
+                  description: Auth configures bearer-token authentication.
+                  type: object
+                  properties:
+                    enabled:
+                      description: Enabled enables authentication. Defaults to false.
+                      type: boolean
+                      default: false
+                    secretRef:
+                      description: >-
+                        SecretRef references a Secret with RGSTR_AUTH_SECRET and
+                        RGSTR_USERS keys.
+                      type: object
+                      required: [name]
+                      properties:
+                        name:
+                          type: string
+                    realm:
+                      description: >-
+                        Realm is the URL of the token endpoint in WWW-Authenticate.
+                        Auto-generated if empty.
+                      type: string
+                    tokenTTL:
+                      description: "TokenTTL is the JWT lifetime. Defaults to 1h."
+                      type: string
+                gcInterval:
+                  description: "GCInterval is the garbage collection interval. Defaults to 1h."
+                  type: string
+                uploadTTL:
+                  description: "UploadTTL is the TTL for incomplete uploads. Defaults to 24h."
+                  type: string
+                publicRepos:
+                  description: >-
+                    PublicRepos is a comma-separated list of glob patterns for
+                    repositories accessible without authentication.
+                  type: string
+                resources:
+                  description: Resources sets CPU/memory requests and limits.
+                  type: object
+                  properties:
+                    limits:
+                      type: object
+                      additionalProperties:
+                        anyOf:
+                          - type: integer
+                          - type: string
+                        x-kubernetes-int-or-string: true
+                    requests:
+                      type: object
+                      additionalProperties:
+                        anyOf:
+                          - type: integer
+                          - type: string
+                        x-kubernetes-int-or-string: true
+            status:
+              description: RegistryStatus defines the observed state of Registry.
+              type: object
+              properties:
+                ready:
+                  description: Ready is true when all replicas are available.
+                  type: boolean
+                serviceName:
+                  description: ServiceName is the name of the managed Service.
+                  type: string
+                clusterIP:
+                  description: ClusterIP of the managed Service.
+                  type: string
+                conditions:
+                  description: Conditions of the Registry.
+                  type: array
+                  items:
+                    description: Condition contains details for one aspect of the current state.
+                    type: object
+                    required: [lastTransitionTime, message, reason, status, type]
+                    properties:
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      message:
+                        type: string
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                      reason:
+                        type: string
+                      status:
+                        type: string
+                      type:
+                        type: string

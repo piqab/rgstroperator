@@ -1,0 +1,35 @@
+apiVersion: registry.rgstr.io/v1alpha1
+kind: Registry
+metadata:
+  name: my-registry
+  namespace: default
+spec:
+  image: ghcr.io/piqab/rgstr:latest
+  replicas: 1
+  port: 5000
+  serviceType: ClusterIP
+
+  storage:
+    size: 20Gi
+    # storageClassName: standard
+
+  gcInterval: "1h"
+  uploadTTL: "24h"
+
+  # Uncomment to allow anonymous pull for public/** repos:
+  # publicRepos: "public/**"
+
+  # Uncomment to enable authentication:
+  # auth:
+  #   enabled: true
+  #   secretRef:
+  #     name: my-registry-auth     # must contain RGSTR_AUTH_SECRET and RGSTR_USERS
+  #   tokenTTL: "1h"
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
