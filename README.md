@@ -77,18 +77,57 @@ make dev
 
 ### Вариант 2 — In-cluster (оператор внутри Kubernetes)
 
-Оператор собирается в Docker-образ, пушится в реестр и деплоится в кластер как `Deployment`.
+Оператор собирается в Docker-образ, пушится в ghcr.io и деплоится в кластер как `Deployment`.
 
-**Требования:** Docker, kubectl, доступ к container registry (например, ghcr.io).
+**Требования:** Docker, kubectl, доступ к ghcr.io (GitHub аккаунт).
 
-#### Шаг 1. Собрать и запушить образ оператора
+#### Шаг 1. Авторизоваться в ghcr.io
+
+Создайте Personal Access Token (PAT) на GitHub:  
+**Settings → Developer settings → Personal access tokens → Generate new token**  
+Необходимые права: `write:packages`, `read:packages`, `delete:packages`.
 
 ```bash
-make docker-build IMAGE=ghcr.io/YOUR_USER/rgstroperator TAG=latest
-make docker-push  IMAGE=ghcr.io/YOUR_USER/rgstroperator TAG=latest
+# Сохранить токен в переменную (или вставить вручную при запросе пароля)
+export CR_PAT=ghp_YOUR_TOKEN_HERE
+
+# Войти в ghcr.io
+echo $CR_PAT | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
 ```
 
-#### Шаг 2. Указать свой образ в manager.yaml
+При успехе: `Login Succeeded`.
+
+#### Шаг 2. Собрать образ оператора
+
+```bash
+make docker-build IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/rgstroperator TAG=latest
+```
+
+Или вручную:
+
+```bash
+docker build -t ghcr.io/YOUR_GITHUB_USERNAME/rgstroperator:latest .
+```
+
+#### Шаг 3. Запушить образ в ghcr.io
+
+```bash
+make docker-push IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/rgstroperator TAG=latest
+```
+
+Или вручную:
+
+```bash
+docker push ghcr.io/YOUR_GITHUB_USERNAME/rgstroperator:latest
+```
+
+После пуша образ появится на `https://github.com/YOUR_GITHUB_USERNAME?tab=packages`.
+
+> **Видимость пакета.** По умолчанию образ **приватный**. Чтобы сделать его публичным:  
+> GitHub → ваш пакет → Package settings → Change visibility → Public.  
+> Для приватного образа добавьте `imagePullSecret` в [config/manager/manager.yaml](config/manager/manager.yaml).
+
+#### Шаг 4. Указать свой образ в manager.yaml
 
 Отредактируйте [config/manager/manager.yaml](config/manager/manager.yaml):
 
