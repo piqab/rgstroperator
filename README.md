@@ -77,65 +77,127 @@ make dev
 
 ### Вариант 2 — In-cluster (оператор внутри Kubernetes)
 
-Оператор собирается в Docker-образ, пушится в ghcr.io и деплоится в кластер как `Deployment`.
+Оператор собирается в Docker-образ, пушится в container registry и деплоится в кластер как `Deployment`.
 
-**Требования:** Docker, kubectl, доступ к ghcr.io (GitHub аккаунт).
+**Требования:** Docker, kubectl.
 
-#### Шаг 1. Авторизоваться в ghcr.io
+Выберите реестр из вариантов ниже, затем переходите к [Шагу 2](#шаг-2-собрать-образ).
 
-Создайте Personal Access Token (PAT) на GitHub:  
-**Settings → Developer settings → Personal access tokens → Generate new token**  
-Необходимые права: `write:packages`, `read:packages`, `delete:packages`.
+---
+
+#### Реестры — авторизация
+
+**ghcr.io (GitHub)**
+
+Создайте PAT: **GitHub → Settings → Developer settings → Personal access tokens → Generate new token**  
+Права: `write:packages`, `read:packages`.
 
 ```bash
-# Сохранить токен в переменную (или вставить вручную при запросе пароля)
-export CR_PAT=ghp_YOUR_TOKEN_HERE
-
-# Войти в ghcr.io
+export CR_PAT=ghp_YOUR_TOKEN
 echo $CR_PAT | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
 ```
 
-При успехе: `Login Succeeded`.
+Имя образа: `ghcr.io/YOUR_GITHUB_USERNAME/rgstroperator:latest`
 
-#### Шаг 2. Собрать образ оператора
+---
 
-```bash
-make docker-build IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/rgstroperator TAG=latest
-```
-
-Или вручную:
+**Docker Hub**
 
 ```bash
-docker build -t ghcr.io/YOUR_GITHUB_USERNAME/rgstroperator:latest .
+docker login -u YOUR_DOCKERHUB_USERNAME
+# введите пароль или Access Token (hub.docker.com → Account Settings → Security)
 ```
 
-#### Шаг 3. Запушить образ в ghcr.io
+Имя образа: `YOUR_DOCKERHUB_USERNAME/rgstroperator:latest`
+
+---
+
+**GitLab Container Registry**
 
 ```bash
-make docker-push IMAGE=ghcr.io/YOUR_GITHUB_USERNAME/rgstroperator TAG=latest
+docker login registry.gitlab.com -u YOUR_GITLAB_USERNAME -p YOUR_ACCESS_TOKEN
 ```
 
-Или вручную:
+Имя образа: `registry.gitlab.com/YOUR_NAMESPACE/YOUR_PROJECT/rgstroperator:latest`
+
+---
+
+**Yandex Container Registry**
 
 ```bash
-docker push ghcr.io/YOUR_GITHUB_USERNAME/rgstroperator:latest
+# Авторизация через yc CLI
+yc iam create-token | docker login --username iam --password-stdin cr.yandex
 ```
 
-После пуша образ появится на `https://github.com/YOUR_GITHUB_USERNAME?tab=packages`.
+Имя образа: `cr.yandex/YOUR_REGISTRY_ID/rgstroperator:latest`
 
-> **Видимость пакета.** По умолчанию образ **приватный**. Чтобы сделать его публичным:  
-> GitHub → ваш пакет → Package settings → Change visibility → Public.  
-> Для приватного образа добавьте `imagePullSecret` в [config/manager/manager.yaml](config/manager/manager.yaml).
+---
 
-#### Шаг 4. Указать свой образ в manager.yaml
+**Свой реестр (self-hosted)**
+
+Если у вас уже развёрнут реестр (например, сам rgstr или distribution/distribution):
+
+```bash
+docker login YOUR_REGISTRY_HOST:PORT -u user -p password
+```
+
+Имя образа: `YOUR_REGISTRY_HOST:PORT/rgstroperator:latest`
+
+Для HTTP-реестра без TLS добавьте в `/etc/docker/daemon.json`:
+
+```json
+{
+  "insecure-registries": ["YOUR_REGISTRY_HOST:PORT"]
+}
+```
+
+---
+
+#### Шаг 2. Собрать образ
+
+Подставьте имя образа из выбранного реестра:
+
+```bash
+make docker-build IMAGE=<имя_образа> TAG=latest
+```
+
+Пример для Docker Hub:
+
+```bash
+make docker-build IMAGE=myuser/rgstroperator TAG=latest
+```
+
+#### Шаг 3. Запушить образ
+
+```bash
+make docker-push IMAGE=<имя_образа> TAG=latest
+```
+
+#### Шаг 4. Указать образ в manager.yaml
 
 Отредактируйте [config/manager/manager.yaml](config/manager/manager.yaml):
 
 ```yaml
 containers:
   - name: manager
-    image: ghcr.io/YOUR_USER/rgstroperator:latest  # ← сюда
+    image: <имя_образа>:latest  # ← сюда
 ```
+
+> **Приватный реестр.** Если образ в приватном реестре, создайте `imagePullSecret` и добавьте его в `manager.yaml`:
+>
+> ```bash
+> kubectl create secret docker-registry regcred \
+>   --docker-server=<registry-host> \
+>   --docker-username=<user> \
+>   --docker-password=<password> \
+>   -n rgstroperator-system
+> ```
+>
+> ```yaml
+> spec:
+>   imagePullSecrets:
+>     - name: regcred
+> ```
 
 #### Шаг 3. Задеплоить всё в кластер
 
