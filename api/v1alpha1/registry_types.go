@@ -93,6 +93,55 @@ type RegistrySpec struct {
 	// Metrics exposes Prometheus metrics.
 	// +optional
 	Metrics MetricsSpec `json:"metrics,omitempty"`
+
+	// Backup schedules backups of the data volume.
+	// +optional
+	Backup BackupSpec `json:"backup,omitempty"`
+}
+
+// BackupSpec schedules backups of the data volume. Backups are not owned
+// by the Registry: deleting it keeps them.
+type BackupSpec struct {
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Schedule in cron format (UTC). Defaults to "0 3 * * *".
+	// +optional
+	Schedule string `json:"schedule,omitempty"`
+
+	// Keep is how many backups to keep. Defaults to 7.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	Keep int32 `json:"keep,omitempty"`
+
+	// Method: VolumeSnapshot (CSI snapshots, made by the operator) or
+	// Longhorn (a Longhorn RecurringJob). Defaults to VolumeSnapshot.
+	// +optional
+	// +kubebuilder:validation:Enum=VolumeSnapshot;Longhorn
+	Method string `json:"method,omitempty"`
+
+	// VolumeSnapshotClassName for the VolumeSnapshot method. Empty: the
+	// default class.
+	// +optional
+	VolumeSnapshotClassName string `json:"volumeSnapshotClassName,omitempty"`
+
+	// Longhorn settings for the Longhorn method.
+	// +optional
+	Longhorn LonghornBackupSpec `json:"longhorn,omitempty"`
+}
+
+// LonghornBackupSpec configures the Longhorn RecurringJob.
+type LonghornBackupSpec struct {
+	// Task: "backup" (to the Longhorn backup target, off the node) or
+	// "snapshot" (on the volume's own replicas). Defaults to "backup".
+	// +optional
+	// +kubebuilder:validation:Enum=backup;snapshot
+	Task string `json:"task,omitempty"`
+
+	// Namespace Longhorn runs in. Defaults to "longhorn-system".
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // MetricsSpec configures Prometheus metrics.
@@ -120,7 +169,7 @@ type ServiceMonitorSpec struct {
 }
 
 // IngressSpec configures the managed Ingress.
-// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || (has(self.host) && self.host != ”)",message="host is required when the ingress is enabled"
+// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || (has(self.host) && size(self.host) > 0)",message="host is required when the ingress is enabled"
 type IngressSpec struct {
 	// Enabled creates an Ingress for Host.
 	// +optional
@@ -302,6 +351,19 @@ type RegistryStatus struct {
 	// Version of the running rgstr, as reported by its /healthz.
 	// +optional
 	Version string `json:"version,omitempty"`
+
+	// LastBackup is the newest backup (VolumeSnapshot method) or the
+	// RecurringJob (Longhorn method).
+	// +optional
+	LastBackup string `json:"lastBackup,omitempty"`
+
+	// LastBackupTime is when the newest VolumeSnapshot was taken.
+	// +optional
+	LastBackupTime *metav1.Time `json:"lastBackupTime,omitempty"`
+
+	// NextBackupTime is when the next backup is due.
+	// +optional
+	NextBackupTime *metav1.Time `json:"nextBackupTime,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -1,0 +1,32 @@
+# Minimal stand-ins for the CSI snapshot and Longhorn CRDs (envtest only).
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: volumesnapshots.snapshot.storage.k8s.io
+  annotations:
+    api-approved.kubernetes.io: "https://github.com/kubernetes-csi/external-snapshotter/pull/419"
+spec:
+  group: snapshot.storage.k8s.io
+  names: {kind: VolumeSnapshot, listKind: VolumeSnapshotList, plural: volumesnapshots, singular: volumesnapshot}
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema: {type: object, x-kubernetes-preserve-unknown-fields: true}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: recurringjobs.longhorn.io
+spec:
+  group: longhorn.io
+  names: {kind: RecurringJob, listKind: RecurringJobList, plural: recurringjobs, singular: recurringjob}
+  scope: Namespaced
+  versions:
+    - name: v1beta2
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema: {type: object, x-kubernetes-preserve-unknown-fields: true}

@@ -36,6 +36,16 @@ spec:
   #     enabled: true          # needs the Prometheus Operator
   #     labels: {release: prometheus}
 
+  # Backups of the data volume (kept when the Registry is deleted):
+  # backup:
+  #   enabled: true
+  #   schedule: "0 3 * * *"       # cron, UTC
+  #   keep: 7
+  #   method: Longhorn             # RecurringJob; or VolumeSnapshot (any CSI driver)
+  #   longhorn:
+  #     task: backup               # to the Longhorn backup target; or snapshot
+  #   # volumeSnapshotClassName: longhorn-snapshot   # VolumeSnapshot method
+
   gcInterval: 1h
   uploadTTL: 24h
   # publicRepos: "public/**"

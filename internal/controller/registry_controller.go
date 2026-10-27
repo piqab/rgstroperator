@@ -28,6 +28,7 @@ const (
 	CondAuth    = "AuthReady"
 	CondIngress = "IngressReady"
 	CondMetrics = "MetricsReady"
+	CondBackup  = "BackupReady"
 )
 
 // resync is how often a Registry is reconciled without any change, to
@@ -51,6 +52,8 @@ type RegistryReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=snapshot.storage.k8s.io,resources=volumesnapshots,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=longhorn.io,resources=recurringjobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile drives the Registry's objects towards its spec. Steps are
@@ -63,10 +66,13 @@ func (r *RegistryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.Get(ctx, req.NamespacedName, reg); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	s := withDefaults(reg)
+	if updated, err := r.syncFinalizer(ctx, reg, s); err != nil || updated {
+		return ctrl.Result{}, err // an update triggers the next reconcile
+	}
 	if !reg.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil // owned objects are removed by Kubernetes
 	}
-	s := withDefaults(reg)
 	st := &reg.Status
 	var errs []error
 	fail := func(cond, reason string, err error) {
@@ -130,12 +136,28 @@ func (r *RegistryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		clearCondition(reg, CondMetrics)
 	}
 
+	requeue := resync
+	if len(errs) == 0 || st.ClaimName != "" {
+		next, err := r.reconcileBackup(ctx, reg, s, st.ClaimName)
+		switch {
+		case err != nil:
+			fail(CondBackup, "BackupFailed", err)
+		case backupMethod(s) == "":
+			clearCondition(reg, CondBackup)
+		default:
+			setCondition(reg, CondBackup, metav1.ConditionTrue, "Scheduled", "backups: "+backupMethod(s))
+		}
+		if next > 0 && next < requeue {
+			requeue = next
+		}
+	}
+
 	r.summarise(reg, s, dep, len(errs) > 0)
 	r.observeVersion(ctx, reg, s)
 	if err := r.Status().Update(ctx, reg); err != nil {
 		errs = append(errs, err)
 	}
-	return ctrl.Result{RequeueAfter: resync}, errors.Join(errs...)
+	return ctrl.Result{RequeueAfter: requeue}, errors.Join(errs...)
 }
 
 // summarise sets Ready, Phase and ObservedGeneration.

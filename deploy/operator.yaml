@@ -118,6 +118,50 @@ spec:
                     pattern: ^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$
                     type: string
                 type: object
+              backup:
+                description: Backup schedules backups of the data volume.
+                properties:
+                  enabled:
+                    type: boolean
+                  keep:
+                    description: Keep is how many backups to keep. Defaults to 7.
+                    format: int32
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                  longhorn:
+                    description: Longhorn settings for the Longhorn method.
+                    properties:
+                      namespace:
+                        description: Namespace Longhorn runs in. Defaults to "longhorn-system".
+                        type: string
+                      task:
+                        description: |-
+                          Task: "backup" (to the Longhorn backup target, off the node) or
+                          "snapshot" (on the volume's own replicas). Defaults to "backup".
+                        enum:
+                        - backup
+                        - snapshot
+                        type: string
+                    type: object
+                  method:
+                    description: |-
+                      Method: VolumeSnapshot (CSI snapshots, made by the operator) or
+                      Longhorn (a Longhorn RecurringJob). Defaults to VolumeSnapshot.
+                    enum:
+                    - VolumeSnapshot
+                    - Longhorn
+                    type: string
+                  schedule:
+                    description: Schedule in cron format (UTC). Defaults to "0 3 *
+                      * *".
+                    type: string
+                  volumeSnapshotClassName:
+                    description: |-
+                      VolumeSnapshotClassName for the VolumeSnapshot method. Empty: the
+                      default class.
+                    type: string
+                type: object
               env:
                 description: Env adds or overrides environment variables of the rgstr
                   container.
@@ -320,7 +364,7 @@ spec:
                 x-kubernetes-validations:
                 - message: host is required when the ingress is enabled
                   rule: '!has(self.enabled) || !self.enabled || (has(self.host) &&
-                    self.host != '''')'
+                    size(self.host) > 0)'
               metrics:
                 description: Metrics exposes Prometheus metrics.
                 properties:
@@ -1944,6 +1988,20 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastBackup:
+                description: |-
+                  LastBackup is the newest backup (VolumeSnapshot method) or the
+                  RecurringJob (Longhorn method).
+                type: string
+              lastBackupTime:
+                description: LastBackupTime is when the newest VolumeSnapshot was
+                  taken.
+                format: date-time
+                type: string
+              nextBackupTime:
+                description: NextBackupTime is when the next backup is due.
+                format: date-time
+                type: string
               observedGeneration:
                 description: ObservedGeneration is the generation the status describes.
                 format: int64
@@ -2034,6 +2092,18 @@ rules:
   - update
   - watch
 - apiGroups:
+  - longhorn.io
+  resources:
+  - recurringjobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - monitoring.coreos.com
   resources:
   - servicemonitors
@@ -2083,6 +2153,16 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - snapshot.storage.k8s.io
+  resources:
+  - volumesnapshots
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
