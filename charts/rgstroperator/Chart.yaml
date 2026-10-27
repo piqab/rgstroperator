@@ -1,16 +1,16 @@
 apiVersion: v2
 name: rgstroperator
-description: Kubernetes operator for rgstr, a minimal OCI/Docker container registry
+description: Operator for rgstr, a lightweight OCI container registry with a web admin, LDAP/OIDC, pull-through cache, Trivy scanning, backups and HA on PostgreSQL and S3
 type: application
 # version and appVersion are set from VERSION by `make bundle`.
-version: 0.5.0
-appVersion: "0.5.0"
+version: 0.5.1
+appVersion: "0.5.1"
 home: https://github.com/piqab/rgstroperator
 icon: https://raw.githubusercontent.com/piqab/rgstroperator/main/docs/icon.png
 sources:
   - https://github.com/piqab/rgstroperator
   - https://github.com/piqab/rgstr
-keywords: [registry, oci, docker, container-registry, operator]
+keywords: [registry, container-registry, oci, docker, operator, harbor-alternative, pull-through-cache, trivy, high-availability]
 maintainers:
   - name: piqab
     url: https://github.com/piqab
@@ -24,16 +24,32 @@ annotations:
   artifacthub.io/links: |
     - name: rgstr
       url: https://github.com/piqab/rgstr
+    - name: Documentation
+      url: https://github.com/piqab/rgstroperator#readme
+    - name: Документация (русский)
+      url: https://github.com/piqab/rgstroperator/blob/main/README.ru.md
+  artifacthub.io/changes: |
+    - kind: added
+      description: Pull-through cache projects (spec.proxies) for Docker Hub, GHCR and other registries
+    - kind: added
+      description: Vulnerability scanning with Trivy (spec.scan); projects can refuse pulls of vulnerable images
+    - kind: added
+      description: Cluster mode with several replicas on PostgreSQL and S3 (spec.database, spec.storage.s3)
+    - kind: changed
+      description: Default rgstr image 1.10.1
   artifacthub.io/images: |
     - name: rgstroperator
-      image: ghcr.io/piqab/rgstroperator:0.5.0
+      image: ghcr.io/piqab/rgstroperator:0.5.1
+      platforms: [linux/amd64, linux/arm64]
+    - name: rgstr
+      image: ghcr.io/piqab/rgstr:1.10.1
       platforms: [linux/amd64, linux/arm64]
   artifacthub.io/crds: |
     - kind: Registry
       version: v1alpha1
       name: registries.registry.rgstr.io
       displayName: Registry
-      description: An rgstr container registry with its volume, Service, Ingress, metrics and backups.
+      description: An rgstr container registry with its storage (volume or S3), sign-in, Ingress, pull-through caches, scanning, metrics and backups; one or several replicas.
   artifacthub.io/crdsExamples: |
     - apiVersion: registry.rgstr.io/v1alpha1
       kind: Registry
