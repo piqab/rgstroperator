@@ -7,6 +7,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -25,6 +26,7 @@ const (
 	CondReady   = "Ready"
 	CondStorage = "StorageReady"
 	CondAuth    = "AuthReady"
+	CondIngress = "IngressReady"
 )
 
 // resync is how often a Registry is reconciled without any change, to
@@ -44,6 +46,7 @@ type RegistryReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services;persistentvolumeclaims;secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile drives the Registry's objects towards its spec. Steps are
@@ -101,6 +104,19 @@ func (r *RegistryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		st.ServiceName, st.ClusterIP = svc.Name, svc.Spec.ClusterIP
 	}
 
+	ing, err := r.reconcileIngress(ctx, reg, s)
+	switch {
+	case err != nil:
+		fail(CondIngress, "IngressFailed", err)
+	case ing == nil:
+		apimeta.RemoveStatusCondition(&st.Conditions, CondIngress)
+	case len(ing.Status.LoadBalancer.Ingress) == 0:
+		setCondition(reg, CondIngress, metav1.ConditionFalse, "NoAddress", "waiting for the ingress controller to assign an address")
+	default:
+		setCondition(reg, CondIngress, metav1.ConditionTrue, "Published", externalURL(reg, s))
+	}
+	st.URL = externalURL(reg, s)
+
 	r.summarise(reg, s, dep, len(errs) > 0)
 	if err := r.Status().Update(ctx, reg); err != nil {
 		errs = append(errs, err)
@@ -142,6 +158,7 @@ func (r *RegistryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&registryv1alpha1.Registry{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&networkingv1.Ingress{}).
 		// A user-provided auth Secret changed: reconcile the Registries
 		// referencing it (its checksum restarts rgstr).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.registriesForSecret)).

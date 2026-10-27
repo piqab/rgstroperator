@@ -25,6 +25,9 @@ spec:
     - jsonPath: .status.ready
       name: Ready
       type: boolean
+    - jsonPath: .status.url
+      name: URL
+      type: string
     - jsonPath: .spec.image
       name: Image
       priority: 1
@@ -265,6 +268,56 @@ spec:
                   type: object
                   x-kubernetes-map-type: atomic
                 type: array
+              ingress:
+                description: |-
+                  Ingress publishes the registry (docker push/pull and the web admin)
+                  outside the cluster.
+                properties:
+                  annotations:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Annotations added to the Ingress; they override the operator's.
+                      For the nginx class the operator lifts the request size limit and
+                      timeouts so large layers upload.
+                    type: object
+                  className:
+                    description: 'ClassName of the ingress controller, e.g. "nginx".
+                      Empty: the default.'
+                    type: string
+                  enabled:
+                    description: Enabled creates an Ingress for Host.
+                    type: boolean
+                  host:
+                    description: Host clients use, e.g. "registry.example.com". Required
+                      when enabled.
+                    type: string
+                  tls:
+                    description: TLS for Host. Container runtimes (kubelet pulls)
+                      require HTTPS.
+                    properties:
+                      clusterIssuer:
+                        description: ClusterIssuer of cert-manager to request the
+                          certificate from.
+                        type: string
+                      enabled:
+                        description: Enabled defaults to true.
+                        type: boolean
+                      issuer:
+                        description: Issuer of cert-manager (namespaced) to request
+                          the certificate from.
+                        type: string
+                      secretName:
+                        description: |-
+                          SecretName holding the certificate. Defaults to "<name>-tls". With
+                          an issuer, cert-manager creates it.
+                        type: string
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: host is required when the ingress is enabled
+                  rule: '!has(self.enabled) || !self.enabled || (has(self.host) &&
+                    self.host != '''')'
               pod:
                 description: Pod customises scheduling and security of the rgstr pod.
                 properties:
@@ -1876,6 +1929,10 @@ spec:
               serviceName:
                 description: ServiceName is the name of the managed Service.
                 type: string
+              url:
+                description: 'URL clients use: https://<ingress host>, or the in-cluster
+                  address.'
+                type: string
             type: object
         type: object
     served: true
@@ -1936,6 +1993,18 @@ rules:
   - coordination.k8s.io
   resources:
   - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
   verbs:
   - create
   - delete

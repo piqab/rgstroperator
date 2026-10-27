@@ -84,6 +84,57 @@ type RegistrySpec struct {
 	// Pod customises scheduling and security of the rgstr pod.
 	// +optional
 	Pod PodSpec `json:"pod,omitempty"`
+
+	// Ingress publishes the registry (docker push/pull and the web admin)
+	// outside the cluster.
+	// +optional
+	Ingress IngressSpec `json:"ingress,omitempty"`
+}
+
+// IngressSpec configures the managed Ingress.
+// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || (has(self.host) && self.host != '')",message="host is required when the ingress is enabled"
+type IngressSpec struct {
+	// Enabled creates an Ingress for Host.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Host clients use, e.g. "registry.example.com". Required when enabled.
+	// +optional
+	Host string `json:"host,omitempty"`
+
+	// ClassName of the ingress controller, e.g. "nginx". Empty: the default.
+	// +optional
+	ClassName *string `json:"className,omitempty"`
+
+	// Annotations added to the Ingress; they override the operator's.
+	// For the nginx class the operator lifts the request size limit and
+	// timeouts so large layers upload.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+
+	// TLS for Host. Container runtimes (kubelet pulls) require HTTPS.
+	// +optional
+	TLS IngressTLSSpec `json:"tls,omitempty"`
+}
+
+// IngressTLSSpec configures TLS of the Ingress.
+type IngressTLSSpec struct {
+	// Enabled defaults to true.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// SecretName holding the certificate. Defaults to "<name>-tls". With
+	// an issuer, cert-manager creates it.
+	// +optional
+	SecretName string `json:"secretName,omitempty"`
+
+	// ClusterIssuer of cert-manager to request the certificate from.
+	// +optional
+	ClusterIssuer string `json:"clusterIssuer,omitempty"`
+
+	// Issuer of cert-manager (namespaced) to request the certificate from.
+	// +optional
+	Issuer string `json:"issuer,omitempty"`
 }
 
 // StorageSpec defines the persistent volume for registry data.
@@ -215,6 +266,10 @@ type RegistryStatus struct {
 	// ClaimName is the PVC holding the registry data.
 	// +optional
 	ClaimName string `json:"claimName,omitempty"`
+
+	// URL clients use: https://<ingress host>, or the in-cluster address.
+	// +optional
+	URL string `json:"url,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -222,6 +277,7 @@ type RegistryStatus struct {
 // +kubebuilder:resource:shortName=rgstr
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Ready",type="boolean",JSONPath=".status.ready"
+// +kubebuilder:printcolumn:name="URL",type="string",JSONPath=".status.url"
 // +kubebuilder:printcolumn:name="Image",type="string",JSONPath=".spec.image",priority=1
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 

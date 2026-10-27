@@ -20,6 +20,15 @@ spec:
     admins: [admin]
     sessionTTL: 12h
 
+  # Publish outside the cluster (docker push/pull, kubelet pulls, web admin).
+  # Container runtimes need HTTPS: use cert-manager or your own TLS Secret.
+  # ingress:
+  #   enabled: true
+  #   host: registry.example.com
+  #   className: nginx
+  #   tls:
+  #     clusterIssuer: letsencrypt   # or secretName: my-tls
+
   gcInterval: 1h
   uploadTTL: 24h
   # publicRepos: "public/**"

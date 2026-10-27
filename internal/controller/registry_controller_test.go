@@ -7,6 +7,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -197,4 +198,63 @@ func TestStopped(t *testing.T) {
 		got := &registryv1alpha1.Registry{}
 		return get(got, ns, "reg") && got.Status.Phase == "Stopped"
 	})
+}
+
+func TestIngress(t *testing.T) {
+	ctx := context.Background()
+	ns := newNamespace(t)
+	nginx := "nginx"
+	reg := &registryv1alpha1.Registry{
+		ObjectMeta: metav1.ObjectMeta{Name: "reg", Namespace: ns},
+		Spec: registryv1alpha1.RegistrySpec{
+			Auth: registryv1alpha1.AuthSpec{Enabled: true},
+			Ingress: registryv1alpha1.IngressSpec{
+				Enabled: true, Host: "registry.example.com", ClassName: &nginx,
+				Annotations: map[string]string{"nginx.ingress.kubernetes.io/proxy-read-timeout": "1800"},
+				TLS:         registryv1alpha1.IngressTLSSpec{ClusterIssuer: "letsencrypt"},
+			},
+		},
+	}
+	if err := k8s.Create(ctx, reg); err != nil {
+		t.Fatal(err)
+	}
+	ing := &networkingv1.Ingress{}
+	eventually(t, "ingress", func() bool { return get(ing, ns, "reg") })
+	a := ing.Annotations
+	if a["nginx.ingress.kubernetes.io/proxy-body-size"] != "0" || a["cert-manager.io/cluster-issuer"] != "letsencrypt" ||
+		a["nginx.ingress.kubernetes.io/proxy-read-timeout"] != "1800" {
+		t.Errorf("annotations: %v", a)
+	}
+	if len(ing.Spec.TLS) != 1 || ing.Spec.TLS[0].SecretName != "reg-tls" || ing.Spec.Rules[0].Host != "registry.example.com" {
+		t.Errorf("tls/rules: %+v %+v", ing.Spec.TLS, ing.Spec.Rules)
+	}
+	dep := deployment(t, ns, "reg")
+	if env := envMap(dep.Spec.Template.Spec.Containers[0]); env["RGSTR_AUTH_REALM"] != "https://registry.example.com/v2/auth" {
+		t.Errorf("realm: %q", env["RGSTR_AUTH_REALM"])
+	}
+	eventually(t, "status url", func() bool {
+		got := &registryv1alpha1.Registry{}
+		return get(got, ns, "reg") && got.Status.URL == "https://registry.example.com"
+	})
+
+	// Disabling the ingress deletes it.
+	get(reg, ns, "reg")
+	reg.Spec.Ingress.Enabled = false
+	if err := k8s.Update(ctx, reg); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "ingress deleted", func() bool {
+		i := &networkingv1.Ingress{}
+		return !get(i, ns, "reg") || !i.DeletionTimestamp.IsZero()
+	})
+}
+
+func TestIngressHostRequired(t *testing.T) {
+	err := k8s.Create(context.Background(), &registryv1alpha1.Registry{
+		ObjectMeta: metav1.ObjectMeta{Name: "reg", Namespace: newNamespace(t)},
+		Spec:       registryv1alpha1.RegistrySpec{Ingress: registryv1alpha1.IngressSpec{Enabled: true}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "host is required") {
+		t.Errorf("ingress without host: %v", err)
+	}
 }

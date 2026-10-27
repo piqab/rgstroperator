@@ -141,7 +141,7 @@ func realm(reg *registryv1alpha1.Registry, s registryv1alpha1.RegistrySpec) stri
 	if s.Auth.Realm != "" {
 		return s.Auth.Realm
 	}
-	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/v2/auth", reg.Name, reg.Namespace, s.Port)
+	return externalURL(reg, s) + "/v2/auth"
 }
 
 func ptr[T any](v T) *T { return &v }
