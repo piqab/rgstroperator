@@ -8,7 +8,7 @@ import (
 )
 
 // DefaultImage is the rgstr release this operator version is tested with.
-const DefaultImage = "ghcr.io/piqab/rgstr:1.10.0"
+const DefaultImage = "ghcr.io/piqab/rgstr:1.10.1"
 
 const (
 	defaultPort        = int32(5000)

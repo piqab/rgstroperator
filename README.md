@@ -21,7 +21,7 @@ The registry state (phase, URL, rgstr version, last backup) is shown by `kubectl
 ```
 $ kubectl get rgstr
 NAME          PHASE     READY   VERSION   URL                            IMAGE                       AGE
-my-registry   Running   true    v1.10.0   https://registry.example.com   ghcr.io/piqab/rgstr:1.10.0   5m
+my-registry   Running   true    v1.10.1   https://registry.example.com   ghcr.io/piqab/rgstr:1.10.1   5m
 ```
 
 ## Installation
@@ -82,7 +82,7 @@ A full example with all options is in [config/samples/registry_v1alpha1_registry
 
 | Field | Default | Description |
 |---|---|---|
-| `image` | `ghcr.io/piqab/rgstr:1.10.0` | rgstr image. Defaults to the release this operator version was tested with |
+| `image` | `ghcr.io/piqab/rgstr:1.10.1` | rgstr image. Defaults to the release this operator version was tested with |
 | `imagePullPolicy`, `imagePullSecrets` | `IfNotPresent` | Pulling the rgstr image |
 | `replicas` | `1` | `0` stops the registry. More than one only in [cluster mode](#cluster-ha) |
 | `proxies[]`, `proxyTTL` | — | Pull-through cache projects, see [Pull-through cache](#pull-through-cache) |
@@ -385,7 +385,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: restore
-          image: ghcr.io/piqab/rgstr:1.10.0
+          image: ghcr.io/piqab/rgstr:1.10.1
           args: [restore, -force, latest]   # or a name: rgstr-backup-20261027-030000.tar
           env:
             - {name: RGSTR_BACKUP_TARGET, value: s3://backups/rgstr/prod}
