@@ -4,32 +4,26 @@ metadata:
   name: my-registry
   namespace: default
 spec:
-  image: ghcr.io/piqab/rgstr:latest
-  replicas: 1
-  port: 5000
-  serviceType: ClusterIP
-
+  # image: ghcr.io/piqab/rgstr:1.7.0   # default: the release this operator is tested with
   storage:
     size: 20Gi
-    # storageClassName: standard
+    # storageClassName: longhorn
+    # retainOnDelete: true             # default: deleting the Registry keeps the data
 
-  gcInterval: "1h"
-  uploadTTL: "24h"
+  auth:
+    enabled: true
+    # Without secretRef the operator creates "my-registry-auth" with a random
+    # RGSTR_AUTH_SECRET and a temporary password for the first admin:
+    #   kubectl get secret my-registry-auth -o jsonpath='{.data.RGSTR_ADMIN_PASSWORD}' | base64 -d
+    # secretRef:
+    #   name: my-registry-auth
+    admins: [admin]
+    sessionTTL: 12h
 
-  # Uncomment to allow anonymous pull for public/** repos:
+  gcInterval: 1h
+  uploadTTL: 24h
   # publicRepos: "public/**"
 
-  # Uncomment to enable authentication:
-  # auth:
-  #   enabled: true
-  #   secretRef:
-  #     name: my-registry-auth     # must contain RGSTR_AUTH_SECRET and RGSTR_USERS
-  #   tokenTTL: "1h"
-
   resources:
-    requests:
-      cpu: "100m"
-      memory: "128Mi"
-    limits:
-      cpu: "500m"
-      memory: "512Mi"
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}

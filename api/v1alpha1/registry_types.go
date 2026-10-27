@@ -6,28 +6,45 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// Duration is a Go duration such as "30m", "1h" or "168h".
+// +kubebuilder:validation:Pattern=`^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$`
+type Duration string
+
 // RegistrySpec defines the desired state of Registry.
 type RegistrySpec struct {
-	// Image is the rgstr container image. Defaults to ghcr.io/piqab/rgstr:latest.
+	// Image is the rgstr image. Defaults to the rgstr release this operator
+	// was tested with (see the operator's README).
 	// +optional
 	Image string `json:"image,omitempty"`
 
-	// Replicas is the number of registry pods. Defaults to 1.
+	// ImagePullPolicy for the rgstr image. Defaults to IfNotPresent.
 	// +optional
-	// +kubebuilder:default=1
+	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
+
+	// ImagePullSecrets for pulling the rgstr image from a private registry.
+	// +optional
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
+	// Replicas is 1 (running) or 0 (stopped). rgstr is a single process on
+	// one volume, so more replicas are not supported. Defaults to 1.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1
 	Replicas *int32 `json:"replicas,omitempty"`
 
-	// Port is the port the registry listens on. Defaults to 5000.
+	// Port the registry listens on. Defaults to 5000.
 	// +optional
-	// +kubebuilder:default=5000
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port,omitempty"`
 
-	// ServiceType is the Kubernetes Service type. Defaults to ClusterIP.
+	// ServiceType of the managed Service. Defaults to ClusterIP.
 	// +optional
-	// +kubebuilder:default=ClusterIP
+	// +kubebuilder:validation:Enum=ClusterIP;NodePort;LoadBalancer
 	ServiceType corev1.ServiceType `json:"serviceType,omitempty"`
 
-	// Storage configures the persistent volume for registry data.
+	// Storage configures the volume for registry data (images, users,
+	// settings, audit log).
 	// +optional
 	Storage StorageSpec `json:"storage,omitempty"`
 
@@ -35,87 +52,180 @@ type RegistrySpec struct {
 	// +optional
 	Auth AuthSpec `json:"auth,omitempty"`
 
-	// GCInterval is the garbage collection interval (e.g. "1h"). Defaults to "1h".
+	// GCInterval is how often garbage collection runs (RGSTR_GC_INTERVAL).
+	// Defaults to "1h"; "0" disables scheduled runs.
 	// +optional
-	GCInterval string `json:"gcInterval,omitempty"`
+	GCInterval Duration `json:"gcInterval,omitempty"`
 
-	// UploadTTL is the TTL for incomplete uploads (e.g. "24h"). Defaults to "24h".
+	// UploadTTL is the lifetime of unfinished uploads and the GC grace
+	// period (RGSTR_UPLOAD_TTL). Defaults to "24h".
 	// +optional
-	UploadTTL string `json:"uploadTTL,omitempty"`
+	UploadTTL Duration `json:"uploadTTL,omitempty"`
 
-	// PublicRepos is a comma-separated list of glob patterns for public repositories.
+	// PublicRepos is a comma-separated list of glob patterns of
+	// repositories anyone may pull (RGSTR_PUBLIC_REPOS).
 	// +optional
 	PublicRepos string `json:"publicRepos,omitempty"`
 
-	// Resources sets CPU/memory requests and limits for the registry container.
+	// TrustedProxies are networks whose X-Forwarded-For header is believed
+	// (RGSTR_TRUSTED_PROXIES). Unset: loopback and private networks, which
+	// covers in-cluster ingress controllers.
+	// +optional
+	TrustedProxies []string `json:"trustedProxies,omitempty"`
+
+	// Env adds or overrides environment variables of the rgstr container.
+	// +optional
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// Resources sets CPU/memory requests and limits for the rgstr container.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Pod customises scheduling and security of the rgstr pod.
+	// +optional
+	Pod PodSpec `json:"pod,omitempty"`
 }
 
-// StorageSpec defines PVC settings for registry blob storage.
+// StorageSpec defines the persistent volume for registry data.
 type StorageSpec struct {
-	// Size is the storage request. Defaults to "10Gi".
+	// Size of the volume. Defaults to "10Gi". Increasing it expands the
+	// volume if the storage class allows expansion.
 	// +optional
-	// +kubebuilder:default="10Gi"
 	Size resource.Quantity `json:"size,omitempty"`
 
-	// StorageClassName is the storage class to use. If empty, the default class is used.
+	// StorageClassName, e.g. "longhorn". Empty: the default class.
 	// +optional
 	StorageClassName *string `json:"storageClassName,omitempty"`
 
 	// AccessModes defaults to [ReadWriteOnce].
 	// +optional
 	AccessModes []corev1.PersistentVolumeAccessMode `json:"accessModes,omitempty"`
+
+	// ExistingClaim uses this PVC instead of creating "<name>-data", e.g.
+	// a volume restored from a backup or snapshot.
+	// +optional
+	ExistingClaim string `json:"existingClaim,omitempty"`
+
+	// RetainOnDelete keeps the PVC (and the generated auth Secret) when the
+	// Registry is deleted. Defaults to true: deleting the resource never
+	// deletes the images.
+	// +optional
+	RetainOnDelete *bool `json:"retainOnDelete,omitempty"`
 }
 
-// AuthSpec configures bearer-token authentication.
+// AuthSpec configures authentication.
 type AuthSpec struct {
-	// Enabled enables authentication. Defaults to false.
+	// Enabled turns authentication on (RGSTR_AUTH_ENABLED).
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
-	// SecretRef references a Kubernetes Secret that must contain:
-	//   RGSTR_AUTH_SECRET — JWT signing secret
-	//   RGSTR_USERS       — comma-separated "user:bcrypt-hash" pairs
+	// SecretRef names a Secret whose keys become rgstr environment
+	// variables (RGSTR_AUTH_SECRET, RGSTR_ADMIN_PASSWORD, RGSTR_USERS, …).
+	// Unset: the operator creates "<name>-auth" with a random
+	// RGSTR_AUTH_SECRET and a temporary RGSTR_ADMIN_PASSWORD.
 	// +optional
 	SecretRef *corev1.LocalObjectReference `json:"secretRef,omitempty"`
 
-	// Realm is the URL of the token endpoint returned in WWW-Authenticate.
-	// Defaults to "http://<service-name>.<namespace>.svc.cluster.local:<port>/v2/auth".
+	// Realm is the token endpoint URL clients are sent to. Defaults to
+	// https://<ingress host>/v2/auth with an ingress, otherwise the
+	// in-cluster Service address.
 	// +optional
 	Realm string `json:"realm,omitempty"`
 
-	// TokenTTL is the lifetime of issued JWT tokens. Defaults to "1h".
+	// TokenTTL is the lifetime of docker login tokens (RGSTR_TOKEN_TTL).
 	// +optional
-	TokenTTL string `json:"tokenTTL,omitempty"`
+	TokenTTL Duration `json:"tokenTTL,omitempty"`
+
+	// SessionTTL is the lifetime of web admin sessions (RGSTR_SESSION_TTL).
+	// +optional
+	SessionTTL Duration `json:"sessionTTL,omitempty"`
+
+	// AdminUser is the name of the first administrator (RGSTR_ADMIN_USER).
+	// Defaults to "admin".
+	// +optional
+	AdminUser string `json:"adminUser,omitempty"`
+
+	// Admins may delete and administer the registry (RGSTR_ADMINS).
+	// +optional
+	Admins []string `json:"admins,omitempty"`
+
+	// ReadOnlyUsers may only pull (RGSTR_READONLY_USERS).
+	// +optional
+	ReadOnlyUsers []string `json:"readOnlyUsers,omitempty"`
+}
+
+// PodSpec customises the rgstr pod.
+type PodSpec struct {
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+	// +optional
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
+	// SecurityContext of the pod.
+	// +optional
+	SecurityContext *corev1.PodSecurityContext `json:"securityContext,omitempty"`
+	// ContainerSecurityContext of the rgstr container.
+	// +optional
+	ContainerSecurityContext *corev1.SecurityContext `json:"containerSecurityContext,omitempty"`
+	// Annotations and Labels added to the pod.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+	// +optional
+	PriorityClassName string `json:"priorityClassName,omitempty"`
+	// ServiceAccountName for the pod. Empty: the namespace default.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 }
 
 // RegistryStatus defines the observed state of Registry.
 type RegistryStatus struct {
-	// Ready is true when the Deployment has the required number of ready replicas.
+	// Phase is a one-word summary: Pending, Running, Stopped or Degraded.
+	// +optional
+	Phase string `json:"phase,omitempty"`
+
+	// Ready is true when the registry pod is ready.
 	Ready bool `json:"ready,omitempty"`
 
-	// Conditions represent the latest available observations of the Registry's state.
+	// ObservedGeneration is the generation the status describes.
 	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions: Ready, StorageReady, and more for optional features.
+	// +optional
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// ServiceName is the name of the managed Service.
 	// +optional
 	ServiceName string `json:"serviceName,omitempty"`
 
-	// ClusterIP is the ClusterIP assigned to the managed Service.
+	// ClusterIP assigned to the managed Service.
 	// +optional
 	ClusterIP string `json:"clusterIP,omitempty"`
+
+	// AuthSecretName is the Secret holding RGSTR_AUTH_SECRET and the
+	// first administrator's temporary password.
+	// +optional
+	AuthSecretName string `json:"authSecretName,omitempty"`
+
+	// ClaimName is the PVC holding the registry data.
+	// +optional
+	ClaimName string `json:"claimName,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:subresource:scale:specpath=.spec.replicas,statuspath=.status.ready
+// +kubebuilder:resource:shortName=rgstr
+// +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Ready",type="boolean",JSONPath=".status.ready"
-// +kubebuilder:printcolumn:name="Service",type="string",JSONPath=".status.serviceName"
+// +kubebuilder:printcolumn:name="Image",type="string",JSONPath=".spec.image",priority=1
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// Registry is the Schema for the registries API.
+// Registry is an rgstr container registry.
 type Registry struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
