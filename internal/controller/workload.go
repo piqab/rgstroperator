@@ -85,7 +85,7 @@ func (r *RegistryReconciler) podSpec(reg *registryv1alpha1.Registry, s registryv
 			{Name: "registry", ContainerPort: s.Port, Protocol: corev1.ProtocolTCP},
 		},
 		Env:             r.env(reg, s),
-		VolumeMounts:    []corev1.VolumeMount{{Name: "data", MountPath: dataDir}},
+		VolumeMounts:    mounts(s),
 		Resources:       s.Resources,
 		LivenessProbe:   probe("/healthz", 5, 15),
 		ReadinessProbe:  probe(readinessPath(s), 2, 5),
@@ -107,9 +107,29 @@ func (r *RegistryReconciler) podSpec(reg *registryv1alpha1.Registry, s registryv
 		ServiceAccountName: s.Pod.ServiceAccountName,
 		// rgstr finishes GC and uploads on SIGTERM within 30 s.
 		TerminationGracePeriodSeconds: ptr(int64(40)),
-		Volumes:                       []corev1.Volume{dataVolume(claim)},
+		Volumes:                       volumes(s, claim),
 		TopologySpreadConstraints:     spread(reg, s),
 	}
+}
+
+// trivyCacheDir holds Trivy's database when the data is in S3 (with a
+// volume it lives on it, under /data/.trivy, and survives restarts).
+const trivyCacheDir = "/var/cache/trivy"
+
+func mounts(s registryv1alpha1.RegistrySpec) []corev1.VolumeMount {
+	m := []corev1.VolumeMount{{Name: "data", MountPath: dataDir}}
+	if s.Scan.Enabled && onS3(s) {
+		m = append(m, corev1.VolumeMount{Name: "trivy", MountPath: trivyCacheDir})
+	}
+	return m
+}
+
+func volumes(s registryv1alpha1.RegistrySpec, claim string) []corev1.Volume {
+	v := []corev1.Volume{dataVolume(claim)}
+	if s.Scan.Enabled && onS3(s) {
+		v = append(v, corev1.Volume{Name: "trivy", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
+	}
+	return v
 }
 
 // dataVolume is the PVC, or an empty directory when the data is in S3.
@@ -213,6 +233,37 @@ func (r *RegistryReconciler) env(reg *registryv1alpha1.Registry, s registryv1alp
 			roles("RGSTR_OIDC_", o.GroupRolesSpec)
 		}
 	}
+	if len(s.Proxies) > 0 {
+		var list []string
+		for _, p := range s.Proxies {
+			list = append(list, p.Name+"="+p.URL)
+			key := "RGSTR_PROXY_" + strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(p.Name)) + "_"
+			if p.Public {
+				add(key+"PUBLIC", "true")
+			}
+			if p.CredentialsSecretRef != nil {
+				for _, kv := range [][2]string{{"USERNAME", "username"}, {"PASSWORD", "password"}} {
+					env = append(env, corev1.EnvVar{Name: key + kv[0], ValueFrom: &corev1.EnvVarSource{
+						SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: *p.CredentialsSecretRef, Key: kv[1]}}})
+				}
+			}
+		}
+		add("RGSTR_PROXIES", strings.Join(list, ","))
+		add("RGSTR_PROXY_TTL", string(s.ProxyTTL))
+	}
+	if s.Scan.Enabled {
+		add("RGSTR_SCAN_ENABLED", "true")
+		if s.Scan.OnPush != nil && !*s.Scan.OnPush {
+			add("RGSTR_SCAN_ON_PUSH", "false")
+		}
+		add("RGSTR_SCAN_INTERVAL", string(s.Scan.Interval))
+		if s.Scan.Concurrency > 0 {
+			add("RGSTR_SCAN_CONCURRENCY", fmt.Sprint(s.Scan.Concurrency))
+		}
+		if onS3(s) {
+			add("RGSTR_SCAN_CACHE_DIR", trivyCacheDir)
+		}
+	}
 	if s.Database != nil {
 		env = append(env, corev1.EnvVar{Name: "RGSTR_DATABASE_URL",
 			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: s.Database.URLSecretRef.DeepCopy()}})
@@ -285,6 +336,11 @@ func referencedSecrets(s registryv1alpha1.RegistrySpec) []string {
 	}
 	if onS3(s) {
 		out = append(out, s.Storage.S3.SecretRef.Name)
+	}
+	for _, p := range s.Proxies {
+		if p.CredentialsSecretRef != nil {
+			out = append(out, p.CredentialsSecretRef.Name)
+		}
 	}
 	return out
 }

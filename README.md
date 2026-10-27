@@ -21,7 +21,7 @@ The registry state (phase, URL, rgstr version, last backup) is shown by `kubectl
 ```
 $ kubectl get rgstr
 NAME          PHASE     READY   VERSION   URL                            IMAGE                       AGE
-my-registry   Running   true    v1.9.0    https://registry.example.com   ghcr.io/piqab/rgstr:1.9.0   5m
+my-registry   Running   true    v1.10.0   https://registry.example.com   ghcr.io/piqab/rgstr:1.10.0   5m
 ```
 
 ## Installation
@@ -82,9 +82,11 @@ A full example with all options is in [config/samples/registry_v1alpha1_registry
 
 | Field | Default | Description |
 |---|---|---|
-| `image` | `ghcr.io/piqab/rgstr:1.9.0` | rgstr image. Defaults to the release this operator version was tested with |
+| `image` | `ghcr.io/piqab/rgstr:1.10.0` | rgstr image. Defaults to the release this operator version was tested with |
 | `imagePullPolicy`, `imagePullSecrets` | `IfNotPresent` | Pulling the rgstr image |
 | `replicas` | `1` | `0` stops the registry. More than one only in [cluster mode](#cluster-ha) |
+| `proxies[]`, `proxyTTL` | — | Pull-through cache projects, see [Pull-through cache](#pull-through-cache) |
+| `scan.*` | off | Vulnerability scanning with Trivy, see [Vulnerability scanning](#vulnerability-scanning) |
 | `database.urlSecretRef` | — | PostgreSQL: enables [cluster mode](#cluster-ha) |
 | `storage.s3.*` | — | Data in a bucket instead of a volume (cluster) |
 | `port` | `5000` | rgstr and Service port |
@@ -247,6 +249,41 @@ Instead of S3, a `ReadWriteMany` volume (CephFS, NFS) works too: remove `storage
 
 **Migrating an existing registry.** Stop it (`replicas: 0`) and move the data with a Job running `rgstr migrate -from /data`, mounting the old PVC at `/data` and passing the same `RGSTR_DATABASE_URL` and `RGSTR_STORAGE_S3_*`; then set `database` and `storage.s3` in the Registry. Details are in the [rgstr README](https://github.com/piqab/rgstr#cluster-ha).
 
+## Pull-through cache
+
+Projects that cache other registries: `<registry>/<name>/<image>` is fetched from the upstream on the first pull and served by rgstr afterwards. This avoids Docker Hub pull limits and keeps images available when the upstream is down.
+
+```yaml
+spec:
+  proxies:
+    - name: dockerhub
+      url: https://registry-1.docker.io
+      public: true                              # anonymous pulls through the cache
+      credentialsSecretRef: {name: dockerhub}   # optional: keys username, password (token)
+    - name: ghcr
+      url: https://ghcr.io
+  proxyTTL: 5m                                  # how often tags are re-checked upstream
+```
+
+```bash
+docker pull registry.example.com/dockerhub/library/nginx:1.27
+```
+
+More caches can be added in the web admin. Details are in the [rgstr README](https://github.com/piqab/rgstr#pull-through-cache).
+
+## Vulnerability scanning
+
+```yaml
+spec:
+  scan:
+    enabled: true
+    interval: 24h      # rescans; new images are scanned on push and when cached
+  resources:
+    limits: {memory: 1Gi}   # Trivy needs a few hundred MB while scanning
+```
+
+The image page of the web admin shows the findings; a project can refuse pulls of vulnerable images in its settings. Trivy's database (about 70 MB) is kept on the data volume, or in an `emptyDir` when the data is in S3. Details are in the [rgstr README](https://github.com/piqab/rgstr#vulnerability-scanning).
+
 ## Metrics
 
 ```yaml
@@ -348,7 +385,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: restore
-          image: ghcr.io/piqab/rgstr:1.9.0
+          image: ghcr.io/piqab/rgstr:1.10.0
           args: [restore, -force, latest]   # or a name: rgstr-backup-20261027-030000.tar
           env:
             - {name: RGSTR_BACKUP_TARGET, value: s3://backups/rgstr/prod}

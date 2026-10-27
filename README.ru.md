@@ -21,7 +21,7 @@ Kubernetes-оператор для [rgstr](https://github.com/piqab/rgstr), ми
 ```
 $ kubectl get rgstr
 NAME          PHASE     READY   VERSION   URL                            IMAGE                       AGE
-my-registry   Running   true    v1.9.0    https://registry.example.com   ghcr.io/piqab/rgstr:1.9.0   5m
+my-registry   Running   true    v1.10.0   https://registry.example.com   ghcr.io/piqab/rgstr:1.10.0   5m
 ```
 
 ## Установка
@@ -82,9 +82,11 @@ kubectl port-forward svc/my-registry 5000:5000
 
 | Поле | По умолчанию | Описание |
 |---|---|---|
-| `image` | `ghcr.io/piqab/rgstr:1.9.0` | Образ rgstr. По умолчанию это релиз, с которым протестирована эта версия оператора |
+| `image` | `ghcr.io/piqab/rgstr:1.10.0` | Образ rgstr. По умолчанию это релиз, с которым протестирована эта версия оператора |
 | `imagePullPolicy`, `imagePullSecrets` | `IfNotPresent` | Скачивание образа rgstr |
 | `replicas` | `1` | `0` останавливает реестр. Больше одной — только в [режиме кластера](#кластер-ha) |
+| `proxies[]`, `proxyTTL` | — | Проекты pull-through кеша, см. [Pull-through кеш](#pull-through-кеш) |
+| `scan.*` | выключено | Сканирование уязвимостей Trivy, см. [Сканирование уязвимостей](#сканирование-уязвимостей) |
 | `database.urlSecretRef` | — | PostgreSQL: включает [режим кластера](#кластер-ha) |
 | `storage.s3.*` | — | Данные в бакете вместо тома (кластер) |
 | `port` | `5000` | Порт rgstr и Service |
@@ -247,6 +249,41 @@ spec:
 
 **Переход существующего реестра.** Остановите его (`replicas: 0`) и перенесите данные Job-ом с `rgstr migrate -from /data`, смонтировав старый PVC в `/data` и передав те же `RGSTR_DATABASE_URL` и `RGSTR_STORAGE_S3_*`; затем укажите в Registry `database` и `storage.s3`. Подробности — в [README rgstr](https://github.com/piqab/rgstr/blob/main/README.ru.md#кластер-ha).
 
+## Pull-through кеш
+
+Проекты-кеши других реестров: `<реестр>/<name>/<образ>` скачивается из upstream при первом pull и дальше отдаётся rgstr. Это обходит лимиты pull Docker Hub и оставляет образы доступными, когда upstream недоступен.
+
+```yaml
+spec:
+  proxies:
+    - name: dockerhub
+      url: https://registry-1.docker.io
+      public: true                              # анонимный pull через кеш
+      credentialsSecretRef: {name: dockerhub}   # необязательно: ключи username, password (токен)
+    - name: ghcr
+      url: https://ghcr.io
+  proxyTTL: 5m                                  # как часто перепроверять теги в upstream
+```
+
+```bash
+docker pull registry.example.com/dockerhub/library/nginx:1.27
+```
+
+Ещё кеши можно добавить в веб-админке. Подробности — в [README rgstr](https://github.com/piqab/rgstr/blob/main/README.ru.md#pull-through-кеш).
+
+## Сканирование уязвимостей
+
+```yaml
+spec:
+  scan:
+    enabled: true
+    interval: 24h      # пересканирование; новые образы сканируются при push и попадании в кеш
+  resources:
+    limits: {memory: 1Gi}   # Trivy нужно несколько сотен МБ во время скана
+```
+
+Страница образа в веб-админке показывает находки; проект в своих настройках может запрещать pull уязвимых образов. База Trivy (около 70 МБ) хранится на томе данных, а при данных в S3 — в `emptyDir`. Подробности — в [README rgstr](https://github.com/piqab/rgstr/blob/main/README.ru.md#сканирование-уязвимостей).
+
 ## Метрики
 
 ```yaml
@@ -348,7 +385,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: restore
-          image: ghcr.io/piqab/rgstr:1.9.0
+          image: ghcr.io/piqab/rgstr:1.10.0
           args: [restore, -force, latest]   # или имя: rgstr-backup-20261027-030000.tar
           env:
             - {name: RGSTR_BACKUP_TARGET, value: s3://backups/rgstr/prod}

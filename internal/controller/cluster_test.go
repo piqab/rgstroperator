@@ -118,3 +118,50 @@ func TestClusterValidation(t *testing.T) {
 		t.Errorf("ReadWriteMany cluster: %v", err)
 	}
 }
+
+func TestProxiesAndScan(t *testing.T) {
+	ctx := context.Background()
+	ns := newNamespace(t)
+	if err := k8s.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "hub", Namespace: ns},
+		StringData: map[string]string{"username": "me", "password": "pat"}}); err != nil {
+		t.Fatal(err)
+	}
+	reg := &registryv1alpha1.Registry{ObjectMeta: metav1.ObjectMeta{Name: "reg", Namespace: ns},
+		Spec: registryv1alpha1.RegistrySpec{
+			Proxies: []registryv1alpha1.ProxySpec{
+				{Name: "docker-hub", URL: "https://registry-1.docker.io", Public: true,
+					CredentialsSecretRef: &corev1.LocalObjectReference{Name: "hub"}},
+				{Name: "ghcr", URL: "https://ghcr.io"},
+			},
+			ProxyTTL: "10m",
+			Scan:     registryv1alpha1.ScanSpec{Enabled: true, Interval: "12h", Concurrency: 2},
+		}}
+	if err := k8s.Create(ctx, reg); err != nil {
+		t.Fatal(err)
+	}
+	c := deployment(t, ns, "reg").Spec.Template.Spec.Containers[0]
+	env := envMap(c)
+	for k, v := range map[string]string{
+		"RGSTR_PROXIES":                 "docker-hub=https://registry-1.docker.io,ghcr=https://ghcr.io",
+		"RGSTR_PROXY_DOCKER_HUB_PUBLIC": "true",
+		"RGSTR_PROXY_TTL":               "10m",
+		"RGSTR_SCAN_ENABLED":            "true",
+		"RGSTR_SCAN_INTERVAL":           "12h",
+		"RGSTR_SCAN_CONCURRENCY":        "2",
+	} {
+		if env[k] != v {
+			t.Errorf("%s = %q, want %q", k, env[k], v)
+		}
+	}
+	if r := secretRef(c, "RGSTR_PROXY_DOCKER_HUB_PASSWORD"); r == nil || r.Name != "hub" || r.Key != "password" {
+		t.Errorf("upstream password ref: %+v", r)
+	}
+	if _, ok := env["RGSTR_SCAN_CACHE_DIR"]; ok {
+		t.Error("Trivy's database should stay on the data volume")
+	}
+	bad := &registryv1alpha1.Registry{ObjectMeta: metav1.ObjectMeta{Name: "bad", Namespace: ns},
+		Spec: registryv1alpha1.RegistrySpec{Proxies: []registryv1alpha1.ProxySpec{{Name: "Docker Hub", URL: "registry-1.docker.io"}}}}
+	if err := k8s.Create(ctx, bad); err == nil {
+		t.Error("invalid proxy accepted")
+	}
+}

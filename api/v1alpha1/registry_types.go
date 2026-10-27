@@ -109,6 +109,24 @@ type RegistrySpec struct {
 	// Backup schedules backups of the data volume.
 	// +optional
 	Backup BackupSpec `json:"backup,omitempty"`
+
+	// Proxies are pull-through cache projects: <name>/<image> is pulled
+	// from the upstream registry on the first request and served from
+	// rgstr afterwards (RGSTR_PROXIES).
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Proxies []ProxySpec `json:"proxies,omitempty"`
+
+	// ProxyTTL is how long a cached tag is served before the upstream is
+	// asked again. Defaults to "5m".
+	// +optional
+	ProxyTTL Duration `json:"proxyTTL,omitempty"`
+
+	// Scan finds vulnerabilities in images with Trivy (built into the
+	// rgstr image).
+	// +optional
+	Scan ScanSpec `json:"scan,omitempty"`
 }
 
 // BackupSpec schedules backups of the data volume. Backups are not owned
@@ -255,6 +273,44 @@ type IngressTLSSpec struct {
 	// Issuer of cert-manager (namespaced) to request the certificate from.
 	// +optional
 	Issuer string `json:"issuer,omitempty"`
+}
+
+// ProxySpec is a pull-through cache project.
+type ProxySpec struct {
+	// Name of the project, e.g. "dockerhub".
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]+([._-][a-z0-9]+)*$`
+	// +kubebuilder:validation:MaxLength=64
+	Name string `json:"name"`
+	// URL of the upstream registry, e.g. "https://registry-1.docker.io",
+	// "https://ghcr.io".
+	// +kubebuilder:validation:Pattern=`^https?://`
+	URL string `json:"url"`
+	// Public allows anonymous pulls through the cache.
+	// +optional
+	Public bool `json:"public,omitempty"`
+	// CredentialsSecretRef names a Secret with "username" and "password"
+	// (or token) for the upstream, e.g. for higher Docker Hub limits.
+	// +optional
+	CredentialsSecretRef *corev1.LocalObjectReference `json:"credentialsSecretRef,omitempty"`
+}
+
+// ScanSpec configures vulnerability scanning (RGSTR_SCAN_*).
+type ScanSpec struct {
+	// Enabled turns scanning on. Give rgstr enough memory: Trivy uses a
+	// few hundred MB while scanning.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+	// OnPush scans new images (pushed or cached). Defaults to true.
+	// +optional
+	OnPush *bool `json:"onPush,omitempty"`
+	// Interval between rescans of tagged images. Defaults to "24h".
+	// +optional
+	Interval Duration `json:"interval,omitempty"`
+	// Concurrency is how many scans run at a time. Defaults to 1.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=8
+	// +optional
+	Concurrency int32 `json:"concurrency,omitempty"`
 }
 
 // DatabaseSpec is the PostgreSQL of cluster mode.
