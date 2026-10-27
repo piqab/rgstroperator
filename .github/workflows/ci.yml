@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: go vet ./...
+
+      # The CRD, RBAC, deepcopy code, deploy/operator.yaml and the chart are
+      # generated: they must be committed up to date.
+      - name: Generated files are up to date
+        run: |
+          make generate bundle
+          git diff --exit-code || { echo "::error::run 'make generate bundle' and commit the result"; exit 1; }
+
+      - name: Test (envtest)
+        run: make test
+
+      - name: Lint the chart
+        run: make chart
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        install: [kubectl, helm]
+    steps:
+      - uses: actions/checkout@v4
+
+      # rgstr is built from source, so the operator is tested against the
+      # registry version it defaults to even before that image is published.
+      - uses: actions/checkout@v4
+        with:
+          repository: piqab/rgstr
+          path: rgstr
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: End-to-end test in kind
+        env:
+          INSTALL: ${{ matrix.install }}
+          RGSTR_SRC: rgstr
+        run: make e2e

@@ -1,4 +1,4 @@
-# Tools installed by make (controller-gen, setup-envtest, kind)
+# Tools installed by make (controller-gen, setup-envtest, kind, helm)
 /bin/
 # envtest assets
 /testbin/

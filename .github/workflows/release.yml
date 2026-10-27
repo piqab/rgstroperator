@@ -1,0 +1,118 @@
+name: Release
+
+# push to main → image ghcr.io/piqab/rgstroperator:main
+# tag v1.2.3   → image :1.2.3, :1.2, :latest; a GitHub Release with
+#                operator.yaml and the chart; the chart at
+#                oci://ghcr.io/<owner>/charts/rgstroperator
+# The version lives in the VERSION file; the tag must be v$(cat VERSION).
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag matches VERSION
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          want="v$(cat VERSION)"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match VERSION file ($want)"
+            exit 1
+          fi
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make test
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Version
+        id: ver
+        run: |
+          v="v$(cat VERSION)"
+          # Builds from main carry the commit, so they are not mistaken for a release.
+          case "$GITHUB_REF" in refs/tags/v*) ;; *) v="${v}-main.${GITHUB_SHA::7}" ;; esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=branch
+            type=sha,prefix=sha-
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.ver.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Package
+        run: |
+          make chart
+          git diff --exit-code || { echo "::error::generated files are out of date"; exit 1; }
+          cp deploy/operator.yaml dist/operator.yaml
+          (cd dist && for f in operator.yaml rgstroperator-*.tgz; do sha256sum "$f" > "$f.sha256"; done)
+
+      - name: Push the chart to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | bin/helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          bin/helm push dist/rgstroperator-*.tgz "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/operator.yaml
+            dist/operator.yaml.sha256
+            dist/rgstroperator-*.tgz
+            dist/rgstroperator-*.tgz.sha256

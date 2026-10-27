@@ -8,7 +8,7 @@ SETUP_ENVTEST  := $(BIN)/setup-envtest
 ENVTEST_K8S    ?= 1.31.x
 
 .PHONY: all generate manifests bundle build test e2e run install uninstall \
-        sample deploy undeploy docker-build docker-push tools
+        sample deploy undeploy docker-build docker-push chart tools
 
 all: generate manifests bundle build
 
@@ -34,8 +34,9 @@ test: $(SETUP_ENVTEST)
 	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S) --bin-dir $(CURDIR)/testbin -p path)" \
 		go test ./... -coverprofile cover.out
 
-## End-to-end test in a kind cluster (RGSTR_SRC=../rgstr builds rgstr from source)
-e2e: bundle $(BIN)/kind
+## End-to-end test in a kind cluster (RGSTR_SRC=../rgstr builds rgstr from source,
+## INSTALL=helm installs the operator with the chart)
+e2e: bundle $(BIN)/kind $(BIN)/helm
 	./hack/e2e.sh
 
 ## Run the operator locally against the current kubeconfig
@@ -71,14 +72,24 @@ docker-build:
 docker-push:
 	docker push $(IMAGE):$(TAG)
 
+## Lint and package the Helm chart into dist/
+chart: bundle $(BIN)/helm
+	$(BIN)/helm lint charts/rgstroperator
+	$(BIN)/helm package charts/rgstroperator -d dist
+
 ## Install the development tools into ./bin
-tools: $(CONTROLLER_GEN) $(SETUP_ENVTEST)
+tools: $(CONTROLLER_GEN) $(SETUP_ENVTEST) $(BIN)/kind $(BIN)/helm
 
 $(CONTROLLER_GEN):
 	GOBIN=$(BIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5
 
 $(BIN)/kind:
 	GOBIN=$(BIN) go install sigs.k8s.io/kind@v0.24.0
+
+$(BIN)/helm:
+	mkdir -p $(BIN)
+	curl -fsSL https://get.helm.sh/helm-v3.16.2-$$(go env GOOS)-$$(go env GOARCH).tar.gz \
+		| tar -xz -C $(BIN) --strip-components=1 $$(go env GOOS)-$$(go env GOARCH)/helm
 
 $(SETUP_ENVTEST):
 	GOBIN=$(BIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.19
