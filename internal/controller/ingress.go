@@ -23,6 +23,10 @@ var nginxAnnotations = map[string]string{
 	"nginx.ingress.kubernetes.io/proxy-send-timeout":      "900",
 }
 
+// publicPaths are the rgstr paths the Ingress publishes. /metrics (no
+// authentication) stays inside the cluster.
+var publicPaths = []string{"/v2", "/ui", "/stats", "/healthz", "/favicon.ico"}
+
 func tlsEnabled(s registryv1alpha1.RegistrySpec) bool {
 	return s.Ingress.TLS.Enabled == nil || *s.Ingress.TLS.Enabled
 }
@@ -84,18 +88,23 @@ func (r *RegistryReconciler) reconcileIngress(ctx context.Context, reg *registry
 		ing.Annotations = ann
 		ing.Labels = labelsFor(reg)
 
-		pathType := networkingv1.PathTypePrefix
 		ing.Spec.IngressClassName = s.Ingress.ClassName
-		ing.Spec.Rules = []networkingv1.IngressRule{{
-			Host: s.Ingress.Host,
-			IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{
-				Paths: []networkingv1.HTTPIngressPath{{
-					Path: "/", PathType: &pathType,
-					Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
-						Name: reg.Name, Port: networkingv1.ServiceBackendPort{Name: "registry"},
-					}},
+		var paths []networkingv1.HTTPIngressPath
+		for _, p := range publicPaths {
+			pathType := networkingv1.PathTypePrefix
+			if p == "/favicon.ico" {
+				pathType = networkingv1.PathTypeExact
+			}
+			paths = append(paths, networkingv1.HTTPIngressPath{
+				Path: p, PathType: &pathType,
+				Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
+					Name: reg.Name, Port: networkingv1.ServiceBackendPort{Name: "registry"},
 				}},
-			}},
+			})
+		}
+		ing.Spec.Rules = []networkingv1.IngressRule{{
+			Host:             s.Ingress.Host,
+			IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{Paths: paths}},
 		}}
 		ing.Spec.TLS = nil
 		if tlsEnabled(s) {

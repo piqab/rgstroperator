@@ -89,10 +89,38 @@ type RegistrySpec struct {
 	// outside the cluster.
 	// +optional
 	Ingress IngressSpec `json:"ingress,omitempty"`
+
+	// Metrics exposes Prometheus metrics.
+	// +optional
+	Metrics MetricsSpec `json:"metrics,omitempty"`
+}
+
+// MetricsSpec configures Prometheus metrics.
+type MetricsSpec struct {
+	// Enabled serves /metrics on the Service (RGSTR_METRICS_ENABLED). The
+	// Ingress never publishes it.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// ServiceMonitor for the Prometheus Operator (needs its CRDs).
+	// +optional
+	ServiceMonitor ServiceMonitorSpec `json:"serviceMonitor,omitempty"`
+}
+
+// ServiceMonitorSpec configures the managed ServiceMonitor.
+type ServiceMonitorSpec struct {
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+	// Interval between scrapes. Defaults to "30s".
+	// +optional
+	Interval Duration `json:"interval,omitempty"`
+	// Labels the Prometheus instance selects ServiceMonitors by.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // IngressSpec configures the managed Ingress.
-// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || (has(self.host) && self.host != '')",message="host is required when the ingress is enabled"
+// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || (has(self.host) && self.host != ”)",message="host is required when the ingress is enabled"
 type IngressSpec struct {
 	// Enabled creates an Ingress for Host.
 	// +optional
@@ -270,6 +298,10 @@ type RegistryStatus struct {
 	// URL clients use: https://<ingress host>, or the in-cluster address.
 	// +optional
 	URL string `json:"url,omitempty"`
+
+	// Version of the running rgstr, as reported by its /healthz.
+	// +optional
+	Version string `json:"version,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -277,6 +309,7 @@ type RegistryStatus struct {
 // +kubebuilder:resource:shortName=rgstr
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Ready",type="boolean",JSONPath=".status.ready"
+// +kubebuilder:printcolumn:name="Version",type="string",JSONPath=".status.version"
 // +kubebuilder:printcolumn:name="URL",type="string",JSONPath=".status.url"
 // +kubebuilder:printcolumn:name="Image",type="string",JSONPath=".spec.image",priority=1
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"

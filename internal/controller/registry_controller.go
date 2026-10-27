@@ -27,6 +27,7 @@ const (
 	CondStorage = "StorageReady"
 	CondAuth    = "AuthReady"
 	CondIngress = "IngressReady"
+	CondMetrics = "MetricsReady"
 )
 
 // resync is how often a Registry is reconciled without any change, to
@@ -38,6 +39,8 @@ type RegistryReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+	// ProbeVersion reads the running version; nil: HTTP to /healthz.
+	ProbeVersion VersionProber
 }
 
 // +kubebuilder:rbac:groups=registry.rgstr.io,resources=registries,verbs=get;list;watch;create;update;patch;delete
@@ -47,6 +50,7 @@ type RegistryReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=services;persistentvolumeclaims;secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile drives the Registry's objects towards its spec. Steps are
@@ -117,7 +121,17 @@ func (r *RegistryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 	st.URL = externalURL(reg, s)
 
+	switch err := r.reconcileServiceMonitor(ctx, reg, s); {
+	case err != nil:
+		fail(CondMetrics, "ServiceMonitorFailed", err)
+	case s.Metrics.Enabled && s.Metrics.ServiceMonitor.Enabled:
+		setCondition(reg, CondMetrics, metav1.ConditionTrue, "ServiceMonitor", "scraped at /metrics")
+	default:
+		clearCondition(reg, CondMetrics)
+	}
+
 	r.summarise(reg, s, dep, len(errs) > 0)
+	r.observeVersion(ctx, reg, s)
 	if err := r.Status().Update(ctx, reg); err != nil {
 		errs = append(errs, err)
 	}

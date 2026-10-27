@@ -124,6 +124,9 @@ func (r *RegistryReconciler) env(reg *registryv1alpha1.Registry, s registryv1alp
 	}
 	add("RGSTR_PUBLIC_REPOS", s.PublicRepos)
 	add("RGSTR_TRUSTED_PROXIES", strings.Join(s.TrustedProxies, ","))
+	if s.Metrics.Enabled {
+		add("RGSTR_METRICS_ENABLED", "true")
+	}
 	if s.Auth.Enabled {
 		add("RGSTR_AUTH_ENABLED", "true")
 		add("RGSTR_AUTH_REALM", realm(reg, s))

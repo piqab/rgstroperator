@@ -25,6 +25,9 @@ spec:
     - jsonPath: .status.ready
       name: Ready
       type: boolean
+    - jsonPath: .status.version
+      name: Version
+      type: string
     - jsonPath: .status.url
       name: URL
       type: string
@@ -318,6 +321,32 @@ spec:
                 - message: host is required when the ingress is enabled
                   rule: '!has(self.enabled) || !self.enabled || (has(self.host) &&
                     self.host != '''')'
+              metrics:
+                description: Metrics exposes Prometheus metrics.
+                properties:
+                  enabled:
+                    description: |-
+                      Enabled serves /metrics on the Service (RGSTR_METRICS_ENABLED). The
+                      Ingress never publishes it.
+                    type: boolean
+                  serviceMonitor:
+                    description: ServiceMonitor for the Prometheus Operator (needs
+                      its CRDs).
+                    properties:
+                      enabled:
+                        type: boolean
+                      interval:
+                        description: Interval between scrapes. Defaults to "30s".
+                        pattern: ^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$
+                        type: string
+                      labels:
+                        additionalProperties:
+                          type: string
+                        description: Labels the Prometheus instance selects ServiceMonitors
+                          by.
+                        type: object
+                    type: object
+                type: object
               pod:
                 description: Pod customises scheduling and security of the rgstr pod.
                 properties:
@@ -1933,6 +1962,9 @@ spec:
                 description: 'URL clients use: https://<ingress host>, or the in-cluster
                   address.'
                 type: string
+              version:
+                description: Version of the running rgstr, as reported by its /healthz.
+                type: string
             type: object
         type: object
     served: true
@@ -1993,6 +2025,18 @@ rules:
   - coordination.k8s.io
   resources:
   - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - servicemonitors
   verbs:
   - create
   - delete

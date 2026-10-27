@@ -46,7 +46,7 @@ func TestMain(m *testing.M) {
 	_ = registryv1alpha1.AddToScheme(scheme)
 
 	env := &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases"), filepath.Join("testdata", "crds")},
 		ErrorIfCRDPathMissing: true,
 	}
 	cfg, err := env.Start()
@@ -59,6 +59,7 @@ func TestMain(m *testing.M) {
 	}
 	if err := (&RegistryReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Recorder: mgr.GetEventRecorderFor("test"),
+		ProbeVersion: func(context.Context, string) (string, error) { return "v1.7.0-test", nil },
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}

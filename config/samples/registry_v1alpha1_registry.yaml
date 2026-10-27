@@ -29,6 +29,13 @@ spec:
   #   tls:
   #     clusterIssuer: letsencrypt   # or secretName: my-tls
 
+  # Prometheus metrics (/metrics stays inside the cluster):
+  # metrics:
+  #   enabled: true
+  #   serviceMonitor:
+  #     enabled: true          # needs the Prometheus Operator
+  #     labels: {release: prometheus}
+
   gcInterval: 1h
   uploadTTL: 24h
   # publicRepos: "public/**"

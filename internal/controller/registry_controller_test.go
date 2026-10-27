@@ -11,6 +11,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	registryv1alpha1 "github.com/piqab/rgstroperator/api/v1alpha1"
 )
@@ -256,5 +257,66 @@ func TestIngressHostRequired(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "host is required") {
 		t.Errorf("ingress without host: %v", err)
+	}
+}
+
+func TestMetricsAndVersion(t *testing.T) {
+	ctx := context.Background()
+	ns := newNamespace(t)
+	reg := &registryv1alpha1.Registry{
+		ObjectMeta: metav1.ObjectMeta{Name: "reg", Namespace: ns},
+		Spec: registryv1alpha1.RegistrySpec{Metrics: registryv1alpha1.MetricsSpec{
+			Enabled:        true,
+			ServiceMonitor: registryv1alpha1.ServiceMonitorSpec{Enabled: true, Labels: map[string]string{"release": "prom"}},
+		}},
+	}
+	if err := k8s.Create(ctx, reg); err != nil {
+		t.Fatal(err)
+	}
+	dep := deployment(t, ns, "reg")
+	if envMap(dep.Spec.Template.Spec.Containers[0])["RGSTR_METRICS_ENABLED"] != "true" {
+		t.Error("metrics not enabled in rgstr")
+	}
+	sm := &unstructured.Unstructured{}
+	sm.SetGroupVersionKind(serviceMonitorGVK)
+	eventually(t, "servicemonitor", func() bool { return get(sm, ns, "reg") })
+	if sm.GetLabels()["release"] != "prom" {
+		t.Errorf("labels: %v", sm.GetLabels())
+	}
+	ep, _, _ := unstructured.NestedSlice(sm.Object, "spec", "endpoints")
+	if len(ep) != 1 || ep[0].(map[string]interface{})["path"] != "/metrics" {
+		t.Errorf("endpoints: %v", ep)
+	}
+
+	// Pretend the pod became ready (envtest has no kubelet): the status
+	// turns Running and reports the version.
+	dep.Status.Replicas, dep.Status.ReadyReplicas, dep.Status.UpdatedReplicas = 1, 1, 1
+	dep.Status.ObservedGeneration = dep.Generation
+	if err := k8s.Status().Update(ctx, dep); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "Running with version", func() bool {
+		got := &registryv1alpha1.Registry{}
+		return get(got, ns, "reg") && got.Status.Phase == "Running" && got.Status.Version == "v1.7.0-test"
+	})
+}
+
+func TestIngressDoesNotPublishMetrics(t *testing.T) {
+	ns := newNamespace(t)
+	if err := k8s.Create(context.Background(), &registryv1alpha1.Registry{
+		ObjectMeta: metav1.ObjectMeta{Name: "reg", Namespace: ns},
+		Spec: registryv1alpha1.RegistrySpec{
+			Metrics: registryv1alpha1.MetricsSpec{Enabled: true},
+			Ingress: registryv1alpha1.IngressSpec{Enabled: true, Host: "r.example.com"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ing := &networkingv1.Ingress{}
+	eventually(t, "ingress", func() bool { return get(ing, ns, "reg") })
+	for _, p := range ing.Spec.Rules[0].HTTP.Paths {
+		if p.Path == "/" || strings.HasPrefix(p.Path, "/metrics") {
+			t.Errorf("ingress publishes %s", p.Path)
+		}
 	}
 }
