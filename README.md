@@ -268,7 +268,7 @@ kubectl delete -f https://github.com/piqab/rgstroperator/releases/latest/downloa
 
 ## Разработка
 
-**Требования:** Go 1.23+, make, Docker. Для e2e нужны также kubectl и curl.
+**Требования:** Go 1.26+, make, Docker. Для e2e нужны также kubectl и curl.
 
 Инструменты (`controller-gen`, `setup-envtest`, `kind`, `helm`) ставятся в `./bin` автоматически.
 

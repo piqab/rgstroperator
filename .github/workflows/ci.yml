@@ -16,10 +16,15 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.26"
+          check-latest: true
 
       - name: Vet
         run: go vet ./...
+
+      # Fails on vulnerabilities in code paths the operator actually calls.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
       # The CRD, RBAC, deepcopy code, deploy/operator.yaml and the chart are
       # generated: they must be committed up to date.
@@ -53,7 +58,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.26"
+          check-latest: true
 
       - name: End-to-end test in kind
         env:
