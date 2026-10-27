@@ -34,7 +34,7 @@ func withDefaults(reg *registryv1alpha1.Registry) registryv1alpha1.RegistrySpec 
 	if s.Replicas == nil {
 		one := int32(1)
 		s.Replicas = &one
-	} else if *s.Replicas > 1 {
+	} else if *s.Replicas > 1 && s.Database == nil {
 		one := int32(1) // validated by the CRD; also guard old objects
 		s.Replicas = &one
 	}
@@ -68,6 +68,12 @@ func labelsFor(reg *registryv1alpha1.Registry) map[string]string {
 		"app.kubernetes.io/managed-by": "rgstroperator",
 	}
 }
+
+// cluster reports whether rgstr runs in cluster mode (shared database).
+func cluster(s registryv1alpha1.RegistrySpec) bool { return s.Database != nil }
+
+// onS3 reports whether the data is in a bucket instead of a volume.
+func onS3(s registryv1alpha1.RegistrySpec) bool { return s.Storage.S3 != nil && s.Database != nil }
 
 func claimName(reg *registryv1alpha1.Registry, s registryv1alpha1.RegistrySpec) string {
 	if s.Storage.ExistingClaim != "" {

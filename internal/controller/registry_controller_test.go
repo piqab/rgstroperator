@@ -174,7 +174,7 @@ func TestReplicasValidation(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "reg", Namespace: ns},
 		Spec:       registryv1alpha1.RegistrySpec{Replicas: &two},
 	})
-	if err == nil || !strings.Contains(err.Error(), "replicas") {
+	if err == nil || !strings.Contains(err.Error(), "spec.database") {
 		t.Errorf("replicas 2 accepted: %v", err)
 	}
 	err = k8s.Create(context.Background(), &registryv1alpha1.Registry{

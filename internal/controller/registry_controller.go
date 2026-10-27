@@ -3,11 +3,13 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -54,6 +56,7 @@ type RegistryReconciler struct {
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=snapshot.storage.k8s.io,resources=volumesnapshots,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups=longhorn.io,resources=recurringjobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile drives the Registry's objects towards its spec. Steps are
@@ -82,13 +85,20 @@ func (r *RegistryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		errs = append(errs, err)
 	}
 
-	claim, err := r.reconcileStorage(ctx, reg, s)
-	st.ClaimName = claim
-	if err != nil {
-		fail(CondStorage, "StorageFailed", err)
+	var claim string
+	if onS3(s) {
+		st.ClaimName = ""
+		setCondition(reg, CondStorage, metav1.ConditionTrue, "S3", "bucket "+s.Storage.S3.Bucket)
 	} else {
-		setCondition(reg, CondStorage, metav1.ConditionTrue, "Bound", "volume "+claim)
+		claim, err := r.reconcileStorage(ctx, reg, s)
+		st.ClaimName = claim
+		if err != nil {
+			fail(CondStorage, "StorageFailed", err)
+		} else {
+			setCondition(reg, CondStorage, metav1.ConditionTrue, "Bound", "volume "+claim)
+		}
 	}
+	claim = st.ClaimName
 
 	secret, checksum, err := r.reconcileAuthSecret(ctx, reg, s)
 	st.AuthSecretName = secret
@@ -112,6 +122,9 @@ func (r *RegistryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		if dep, err = r.reconcileDeployment(ctx, reg, s, claim, secret, checksum); err != nil {
 			fail(CondReady, "DeploymentFailed", err)
 		}
+	}
+	if err := r.reconcilePDB(ctx, reg, s); err != nil {
+		fail(CondReady, "PodDisruptionBudgetFailed", err)
 	}
 	svc, err := r.reconcileService(ctx, reg, s)
 	if err != nil {
@@ -143,7 +156,7 @@ func (r *RegistryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	requeue := resync
-	if len(errs) == 0 || st.ClaimName != "" {
+	if (len(errs) == 0 || st.ClaimName != "") && !cluster(s) {
 		next, err := r.reconcileBackup(ctx, reg, s, st.ClaimName)
 		switch {
 		case err != nil:
@@ -170,8 +183,12 @@ func (r *RegistryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 func (r *RegistryReconciler) summarise(reg *registryv1alpha1.Registry, s registryv1alpha1.RegistrySpec, dep *appsv1.Deployment, failed bool) {
 	st := &reg.Status
 	st.ObservedGeneration = reg.Generation
-	st.Ready = dep != nil && *s.Replicas == 1 && dep.Status.ReadyReplicas >= 1 &&
+	st.Ready = dep != nil && *s.Replicas >= 1 && dep.Status.ReadyReplicas >= 1 &&
 		dep.Status.ObservedGeneration >= dep.Generation && dep.Status.UpdatedReplicas >= 1
+	st.Replicas = fmt.Sprintf("0/%d", *s.Replicas)
+	if dep != nil {
+		st.Replicas = fmt.Sprintf("%d/%d", dep.Status.ReadyReplicas, *s.Replicas)
+	}
 	switch {
 	case failed:
 		st.Phase = "Degraded"
@@ -201,6 +218,7 @@ func (r *RegistryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.Ingress{}).
+		Owns(&policyv1.PodDisruptionBudget{}).
 		// A Secret a Registry reads changed (auth, LDAP, OIDC, S3 keys):
 		// reconcile the Registries referencing it (its checksum restarts rgstr).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.registriesForSecret)).

@@ -7,7 +7,7 @@ CONTROLLER_GEN := $(BIN)/controller-gen
 SETUP_ENVTEST  := $(BIN)/setup-envtest
 ENVTEST_K8S    ?= 1.31.x
 
-.PHONY: all generate manifests bundle build test e2e run install uninstall \
+.PHONY: all generate manifests bundle build test e2e e2e-ha run install uninstall \
         sample deploy undeploy docker-build docker-push chart tools
 
 all: generate manifests bundle build
@@ -38,6 +38,10 @@ test: $(SETUP_ENVTEST)
 ## INSTALL=helm installs the operator with the chart)
 e2e: bundle $(BIN)/kind $(BIN)/helm
 	./hack/e2e.sh
+
+## End-to-end test of cluster mode (3 replicas on PostgreSQL and S3) in kind
+e2e-ha: bundle $(BIN)/kind
+	./hack/e2e-ha.sh
 
 ## Run the operator locally against the current kubeconfig
 run: install

@@ -259,7 +259,7 @@ func (r *RegistryReconciler) reconcileLonghornJob(ctx context.Context, reg *regi
 
 // backupMethod is the active backup method, "" when backups are off.
 func backupMethod(s registryv1alpha1.RegistrySpec) string {
-	if !s.Backup.Enabled {
+	if !s.Backup.Enabled || cluster(s) {
 		return ""
 	}
 	if s.Backup.Method == "" {

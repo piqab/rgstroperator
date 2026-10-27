@@ -9,7 +9,7 @@ Kubernetes-оператор для [rgstr](https://github.com/piqab/rgstr), ми
 - **хранилище:** `PersistentVolumeClaim` с данными, который по умолчанию переживает удаление ресурса;
 - **секрет аутентификации:** ключ подписи токенов и временный пароль первого администратора генерируются сами;
 - **вход через LDAP / Active Directory и единый вход (OIDC)** с ролями по группам;
-- **Deployment и Service** rgstr;
+- **Deployment и Service** rgstr, в том числе [кластер из нескольких реплик](#кластер-ha) на S3 и PostgreSQL;
 - **Ingress** с TLS, в том числе через cert-manager;
 - **метрики** Prometheus и `ServiceMonitor`;
 - **резервные копии:** в S3 силами самого rgstr (без CSI-драйвера), CSI `VolumeSnapshot` по расписанию или `RecurringJob` в Longhorn.
@@ -82,7 +82,9 @@ kubectl port-forward svc/my-registry 5000:5000
 |---|---|---|
 | `image` | `ghcr.io/piqab/rgstr:1.8.0` | Образ rgstr. По умолчанию это релиз, с которым протестирована эта версия оператора |
 | `imagePullPolicy`, `imagePullSecrets` | `IfNotPresent` | Скачивание образа rgstr |
-| `replicas` | `1` | `1` запускает реестр, `0` останавливает. rgstr работает одним процессом на том, поэтому больше одной реплики не бывает |
+| `replicas` | `1` | `0` останавливает реестр. Больше одной — только в [режиме кластера](#кластер-ha) |
+| `database.urlSecretRef` | — | PostgreSQL: включает [режим кластера](#кластер-ha) |
+| `storage.s3.*` | — | Данные в бакете вместо тома (кластер) |
 | `port` | `5000` | Порт rgstr и Service |
 | `serviceType` | `ClusterIP` | `ClusterIP`, `NodePort` или `LoadBalancer` |
 | `storage.size` | `10Gi` | Размер тома. Увеличение расширяет PVC, если StorageClass это позволяет |
@@ -201,6 +203,46 @@ ingress:
 - **Адрес:** `status.url` становится `https://<host>`, и на него же указывает realm токенов.
 
 Если перед ingress-контроллером есть ещё прокси, укажите его сети в `trustedProxies`. Тогда в журнале и для fail2ban в rgstr будут реальные IP клиентов.
+
+## Кластер (HA)
+
+С `spec.database` (PostgreSQL) и `spec.storage.s3` реестр работает несколькими подами: любой принимает push и pull, а падение пода, узла или обновление не прерывают ни push, ни pull.
+
+```yaml
+apiVersion: registry.rgstr.io/v1alpha1
+kind: Registry
+metadata: {name: registry}
+spec:
+  replicas: 3
+  auth: {enabled: true}
+  database:
+    urlSecretRef: {name: rgstr-db, key: url}   # postgres://user:pass@host:5432/rgstr?sslmode=require
+  storage:
+    s3:
+      bucket: registry                          # создайте заранее
+      endpoint: https://storage.yandexcloud.net # пусто: AWS S3
+      region: ru-central1
+      secretRef: {name: rgstr-s3}               # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+      # redirect: true   # слои качаются клиентами прямо из S3, мимо rgstr
+  ingress:
+    enabled: true
+    host: registry.example.com
+    tls: {clusterIssuer: letsencrypt}
+```
+
+Что оператор делает в этом режиме:
+
+- PVC не создаётся: данные в бакете, состояние (пользователи, проекты, настройки, сессии, журнал) — в PostgreSQL. Таблицы rgstr создаёт сам.
+- Deployment обновляется `RollingUpdate` с `maxUnavailable: 0`: новые поды поднимаются раньше, чем уходят старые.
+- Readiness — `/readyz`: под без связи с базой или S3 выходит из Service, а не отвечает ошибками.
+- `PodDisruptionBudget` (`maxUnavailable: 1`) не даёт drain-у узлов снять все поды сразу; поды разносятся по узлам и зонам (`topologySpreadConstraints`), если не задан свой `pod.affinity`.
+- `status.replicas` показывает готовые поды, например `3/3`.
+
+Отказоустойчивость самих PostgreSQL и S3 — их забота: например, CloudNativePG или managed PostgreSQL и S3 с репликацией. Бэкапы в этом режиме — бэкапы базы и версионирование или репликация бакета; `spec.backup` не применяется.
+
+Вместо S3 подойдёт том `ReadWriteMany` (CephFS, NFS): уберите `storage.s3` и задайте `storage.accessModes: [ReadWriteMany]`.
+
+**Переход существующего реестра.** Остановите его (`replicas: 0`) и перенесите данные Job-ом с `rgstr migrate -from /data`, смонтировав старый PVC в `/data` и передав те же `RGSTR_DATABASE_URL` и `RGSTR_STORAGE_S3_*`; затем укажите в Registry `database` и `storage.s3`. Подробности — в [README rgstr](https://github.com/piqab/rgstr#кластер-ha).
 
 ## Метрики
 
@@ -384,6 +426,7 @@ kubectl delete -f https://github.com/piqab/rgstroperator/releases/latest/downloa
 | `make bundle` | Собрать `deploy/operator.yaml` и обновить CRD, RBAC и версию в чарте |
 | `make test` | Unit- и envtest-тесты (настоящий kube-apiserver, без кластера) |
 | `make e2e` | Полный тест в kind: установка, вход, push, метрики, сохранность данных |
+| `make e2e-ha` | Кластер в kind: 3 реплики на PostgreSQL и S3, pull без сбоев при обновлении и удалении подов |
 | `make chart` | `helm lint` и пакет чарта в `dist/` |
 | `make run` | Запустить оператор локально против текущего kubeconfig |
 | `make install`, `make sample` | Установить CRD и применить пример |

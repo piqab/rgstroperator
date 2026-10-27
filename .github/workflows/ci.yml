@@ -66,3 +66,26 @@ jobs:
           INSTALL: ${{ matrix.install }}
           RGSTR_SRC: rgstr
         run: make e2e
+
+  # Cluster mode: three replicas on PostgreSQL and S3 (SeaweedFS) in kind,
+  # pulled continuously while the Deployment is rolled and pods deleted.
+  e2e-ha:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: piqab/rgstr
+          path: rgstr
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+
+      - name: Cluster end-to-end test in kind
+        env:
+          RGSTR_SRC: rgstr
+        run: make e2e-ha

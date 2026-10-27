@@ -31,10 +31,18 @@ func (r *RegistryReconciler) reconcileDeployment(ctx context.Context, reg *regis
 			dep.Spec.Selector = &metav1.LabelSelector{MatchLabels: labels}
 		}
 		dep.Spec.Replicas = s.Replicas
-		// One process per volume: the old pod must stop before the new one
-		// starts (an RWO volume cannot attach twice; two rgstr processes on
-		// one data directory would corrupt it).
-		dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+		if cluster(s) {
+			// Processes share state through the database: replace pods one
+			// at a time, never dropping below the desired count.
+			zero, one := intstr.FromInt32(0), intstr.FromInt32(1)
+			dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateDeployment{MaxUnavailable: &zero, MaxSurge: &one}}
+		} else {
+			// One process per volume: the old pod must stop before the new one
+			// starts (an RWO volume cannot attach twice; two rgstr processes on
+			// one data directory would corrupt it).
+			dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+		}
 
 		podLabels := map[string]string{}
 		for k, v := range s.Pod.Labels {
@@ -58,11 +66,11 @@ func (r *RegistryReconciler) reconcileDeployment(ctx context.Context, reg *regis
 }
 
 func (r *RegistryReconciler) podSpec(reg *registryv1alpha1.Registry, s registryv1alpha1.RegistrySpec, claim, authSecret string) corev1.PodSpec {
-	probe := func(delay, period int32) *corev1.Probe {
+	probe := func(path string, delay, period int32) *corev1.Probe {
 		return &corev1.Probe{
 			// /healthz answers without credentials; /v2/ is 401 with auth.
 			ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
-				Path: "/healthz", Port: intstr.FromString("registry"), Scheme: corev1.URISchemeHTTP,
+				Path: path, Port: intstr.FromString("registry"), Scheme: corev1.URISchemeHTTP,
 			}},
 			InitialDelaySeconds: delay,
 			PeriodSeconds:       period,
@@ -79,8 +87,8 @@ func (r *RegistryReconciler) podSpec(reg *registryv1alpha1.Registry, s registryv
 		Env:             r.env(reg, s),
 		VolumeMounts:    []corev1.VolumeMount{{Name: "data", MountPath: dataDir}},
 		Resources:       s.Resources,
-		LivenessProbe:   probe(5, 15),
-		ReadinessProbe:  probe(2, 5),
+		LivenessProbe:   probe("/healthz", 5, 15),
+		ReadinessProbe:  probe(readinessPath(s), 2, 5),
 		SecurityContext: s.Pod.ContainerSecurityContext,
 	}
 	if authSecret != "" {
@@ -99,12 +107,42 @@ func (r *RegistryReconciler) podSpec(reg *registryv1alpha1.Registry, s registryv
 		ServiceAccountName: s.Pod.ServiceAccountName,
 		// rgstr finishes GC and uploads on SIGTERM within 30 s.
 		TerminationGracePeriodSeconds: ptr(int64(40)),
-		Volumes: []corev1.Volume{{
-			Name: "data",
-			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: claim,
-			}},
-		}},
+		Volumes:                       []corev1.Volume{dataVolume(claim)},
+		TopologySpreadConstraints:     spread(reg, s),
+	}
+}
+
+// dataVolume is the PVC, or an empty directory when the data is in S3.
+func dataVolume(claim string) corev1.Volume {
+	v := corev1.Volume{Name: "data"}
+	if claim == "" {
+		v.EmptyDir = &corev1.EmptyDirVolumeSource{}
+	} else {
+		v.PersistentVolumeClaim = &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claim}
+	}
+	return v
+}
+
+// readinessPath: in cluster mode /readyz also checks the database and the
+// storage, so a pod that lost them leaves the Service instead of
+// answering with errors.
+func readinessPath(s registryv1alpha1.RegistrySpec) string {
+	if cluster(s) {
+		return "/readyz"
+	}
+	return "/healthz"
+}
+
+// spread places replicas on different nodes (and zones) when possible,
+// unless the pod spec sets its own affinity.
+func spread(reg *registryv1alpha1.Registry, s registryv1alpha1.RegistrySpec) []corev1.TopologySpreadConstraint {
+	if *s.Replicas <= 1 || s.Pod.Affinity != nil {
+		return nil
+	}
+	sel := &metav1.LabelSelector{MatchLabels: labelsFor(reg)}
+	return []corev1.TopologySpreadConstraint{
+		{MaxSkew: 1, TopologyKey: "kubernetes.io/hostname", WhenUnsatisfiable: corev1.ScheduleAnyway, LabelSelector: sel},
+		{MaxSkew: 1, TopologyKey: "topology.kubernetes.io/zone", WhenUnsatisfiable: corev1.ScheduleAnyway, LabelSelector: sel},
 	}
 }
 
@@ -175,6 +213,29 @@ func (r *RegistryReconciler) env(reg *registryv1alpha1.Registry, s registryv1alp
 			roles("RGSTR_OIDC_", o.GroupRolesSpec)
 		}
 	}
+	if s.Database != nil {
+		env = append(env, corev1.EnvVar{Name: "RGSTR_DATABASE_URL",
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: s.Database.URLSecretRef.DeepCopy()}})
+	}
+	if onS3(s) {
+		st := s.Storage.S3
+		add("RGSTR_STORAGE_DRIVER", "s3")
+		add("RGSTR_STORAGE_S3_BUCKET", st.Bucket)
+		add("RGSTR_STORAGE_S3_PREFIX", st.Prefix)
+		add("RGSTR_STORAGE_S3_ENDPOINT", st.Endpoint)
+		add("RGSTR_STORAGE_S3_REGION", st.Region)
+		if st.PathStyle != nil {
+			add("RGSTR_STORAGE_S3_PATH_STYLE", fmt.Sprint(*st.PathStyle))
+		}
+		if st.Redirect {
+			add("RGSTR_STORAGE_S3_REDIRECT", "true")
+		}
+		for k, v := range map[string]string{"RGSTR_STORAGE_S3_ACCESS_KEY": "AWS_ACCESS_KEY_ID",
+			"RGSTR_STORAGE_S3_SECRET_KEY": "AWS_SECRET_ACCESS_KEY"} {
+			env = append(env, corev1.EnvVar{Name: k, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: st.SecretRef, Key: v}}})
+		}
+	}
 	if backupMethod(s) == methodS3 && s.Backup.S3 != nil {
 		b, _ := backupSettings(s)
 		s3 := s.Backup.S3
@@ -218,6 +279,12 @@ func referencedSecrets(s registryv1alpha1.RegistrySpec) []string {
 	}
 	if backupMethod(s) == methodS3 && s.Backup.S3 != nil {
 		out = append(out, s.Backup.S3.SecretRef.Name)
+	}
+	if s.Database != nil {
+		out = append(out, s.Database.URLSecretRef.Name)
+	}
+	if onS3(s) {
+		out = append(out, s.Storage.S3.SecretRef.Name)
 	}
 	return out
 }

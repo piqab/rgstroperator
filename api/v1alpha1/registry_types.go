@@ -11,6 +11,10 @@ import (
 type Duration string
 
 // RegistrySpec defines the desired state of Registry.
+// +kubebuilder:validation:XValidation:rule="!has(self.replicas) || self.replicas <= 1 || has(self.database)",message="more than one replica needs spec.database (cluster mode)"
+// +kubebuilder:validation:XValidation:rule="!has(self.replicas) || self.replicas <= 1 || (has(self.storage) && (has(self.storage.s3) || (has(self.storage.accessModes) && self.storage.accessModes.exists(m, m == 'ReadWriteMany'))))",message="more than one replica needs storage.s3 or a ReadWriteMany volume"
+// +kubebuilder:validation:XValidation:rule="!has(self.storage) || !has(self.storage.s3) || has(self.database)",message="storage.s3 needs spec.database"
+// +kubebuilder:validation:XValidation:rule="!has(self.database) || !has(self.backup) || !has(self.backup.enabled) || !self.backup.enabled",message="in cluster mode back up the S3 bucket and PostgreSQL; spec.backup does not apply"
 type RegistrySpec struct {
 	// Image is the rgstr image. Defaults to the rgstr release this operator
 	// was tested with (see the operator's README).
@@ -25,11 +29,12 @@ type RegistrySpec struct {
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 
-	// Replicas is 1 (running) or 0 (stopped). rgstr is a single process on
-	// one volume, so more replicas are not supported. Defaults to 1.
-	// +optional
+	// Replicas: 0 stops the registry. More than 1 needs cluster mode
+	// (spec.database and S3 or a ReadWriteMany volume): without it rgstr
+	// is one process on its volume. Defaults to 1.
 	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=1
+	// +kubebuilder:validation:Maximum=50
+	// +optional
 	Replicas *int32 `json:"replicas,omitempty"`
 
 	// Port the registry listens on. Defaults to 5000.
@@ -93,6 +98,13 @@ type RegistrySpec struct {
 	// Metrics exposes Prometheus metrics.
 	// +optional
 	Metrics MetricsSpec `json:"metrics,omitempty"`
+
+	// Database turns on cluster mode: rgstr processes share users,
+	// projects, settings, sessions and the audit log in PostgreSQL and
+	// coordinate garbage collection, so several replicas serve one
+	// registry.
+	// +optional
+	Database *DatabaseSpec `json:"database,omitempty"`
 
 	// Backup schedules backups of the data volume.
 	// +optional
@@ -245,8 +257,49 @@ type IngressTLSSpec struct {
 	Issuer string `json:"issuer,omitempty"`
 }
 
+// DatabaseSpec is the PostgreSQL of cluster mode.
+type DatabaseSpec struct {
+	// URLSecretRef selects the connection URL,
+	// postgres://user:password@host:5432/db?sslmode=require. The tables are
+	// created by rgstr.
+	URLSecretRef corev1.SecretKeySelector `json:"urlSecretRef"`
+}
+
+// S3StorageSpec keeps the registry data in an S3-compatible bucket instead
+// of a volume (no PersistentVolumeClaim is created).
+type S3StorageSpec struct {
+	// Bucket, created beforehand.
+	// +kubebuilder:validation:MinLength=1
+	Bucket string `json:"bucket"`
+	// Prefix of the keys, e.g. "prod".
+	// +optional
+	Prefix string `json:"prefix,omitempty"`
+	// Endpoint, e.g. "https://storage.yandexcloud.net" or
+	// "http://minio.minio:9000". Empty: AWS S3 for Region.
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+	// Region. Defaults to "us-east-1".
+	// +optional
+	Region string `json:"region,omitempty"`
+	// PathStyle addresses https://endpoint/bucket/key. Defaults to true with
+	// an Endpoint, false for AWS.
+	// +optional
+	PathStyle *bool `json:"pathStyle,omitempty"`
+	// Redirect sends layer downloads to presigned S3 URLs: clients fetch
+	// them straight from the bucket. Clients must reach the endpoint.
+	// +optional
+	Redirect bool `json:"redirect,omitempty"`
+	// SecretRef names a Secret with AWS_ACCESS_KEY_ID and
+	// AWS_SECRET_ACCESS_KEY.
+	SecretRef corev1.LocalObjectReference `json:"secretRef"`
+}
+
 // StorageSpec defines the persistent volume for registry data.
 type StorageSpec struct {
+	// S3 keeps the data in a bucket instead of a volume (cluster mode).
+	// +optional
+	S3 *S3StorageSpec `json:"s3,omitempty"`
+
 	// Size of the volume. Defaults to "10Gi". Increasing it expands the
 	// volume if the storage class allows expansion.
 	// +optional
@@ -444,8 +497,12 @@ type RegistryStatus struct {
 	// +optional
 	Phase string `json:"phase,omitempty"`
 
-	// Ready is true when the registry pod is ready.
+	// Ready is true when at least one registry pod is ready.
 	Ready bool `json:"ready,omitempty"`
+
+	// Replicas is "ready/desired", e.g. "3/3".
+	// +optional
+	Replicas string `json:"replicas,omitempty"`
 
 	// ObservedGeneration is the generation the status describes.
 	// +optional
@@ -501,6 +558,7 @@ type RegistryStatus struct {
 // +kubebuilder:resource:shortName=rgstr
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Ready",type="boolean",JSONPath=".status.ready"
+// +kubebuilder:printcolumn:name="Replicas",type="string",JSONPath=".status.replicas"
 // +kubebuilder:printcolumn:name="Version",type="string",JSONPath=".status.version"
 // +kubebuilder:printcolumn:name="URL",type="string",JSONPath=".status.url"
 // +kubebuilder:printcolumn:name="Image",type="string",JSONPath=".spec.image",priority=1

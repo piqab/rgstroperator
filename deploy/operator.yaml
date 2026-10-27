@@ -25,6 +25,9 @@ spec:
     - jsonPath: .status.ready
       name: Ready
       type: boolean
+    - jsonPath: .status.replicas
+      name: Replicas
+      type: string
     - jsonPath: .status.version
       name: Version
       type: string
@@ -397,6 +400,43 @@ spec:
                   rule: '!has(self.enabled) || !self.enabled || !has(self.method)
                     || self.method != ''S3'' || (has(self.s3) && has(self.s3.bucket)
                     && has(self.s3.secretRef))'
+              database:
+                description: |-
+                  Database turns on cluster mode: rgstr processes share users,
+                  projects, settings, sessions and the audit log in PostgreSQL and
+                  coordinate garbage collection, so several replicas serve one
+                  registry.
+                properties:
+                  urlSecretRef:
+                    description: |-
+                      URLSecretRef selects the connection URL,
+                      postgres://user:password@host:5432/db?sslmode=require. The tables are
+                      created by rgstr.
+                    properties:
+                      key:
+                        description: The key of the secret to select from.  Must be
+                          a valid secret key.
+                        type: string
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                      optional:
+                        description: Specify whether the Secret or its key must be
+                          defined
+                        type: boolean
+                    required:
+                    - key
+                    type: object
+                    x-kubernetes-map-type: atomic
+                required:
+                - urlSecretRef
+                type: object
               env:
                 description: Env adds or overrides environment variables of the rgstr
                   container.
@@ -2025,10 +2065,11 @@ spec:
                 type: string
               replicas:
                 description: |-
-                  Replicas is 1 (running) or 0 (stopped). rgstr is a single process on
-                  one volume, so more replicas are not supported. Defaults to 1.
+                  Replicas: 0 stops the registry. More than 1 needs cluster mode
+                  (spec.database and S3 or a ReadWriteMany volume): without it rgstr
+                  is one process on its volume. Defaults to 1.
                 format: int32
-                maximum: 1
+                maximum: 50
                 minimum: 0
                 type: integer
               resources:
@@ -2119,6 +2160,55 @@ spec:
                       Registry is deleted. Defaults to true: deleting the resource never
                       deletes the images.
                     type: boolean
+                  s3:
+                    description: S3 keeps the data in a bucket instead of a volume
+                      (cluster mode).
+                    properties:
+                      bucket:
+                        description: Bucket, created beforehand.
+                        minLength: 1
+                        type: string
+                      endpoint:
+                        description: |-
+                          Endpoint, e.g. "https://storage.yandexcloud.net" or
+                          "http://minio.minio:9000". Empty: AWS S3 for Region.
+                        type: string
+                      pathStyle:
+                        description: |-
+                          PathStyle addresses https://endpoint/bucket/key. Defaults to true with
+                          an Endpoint, false for AWS.
+                        type: boolean
+                      prefix:
+                        description: Prefix of the keys, e.g. "prod".
+                        type: string
+                      redirect:
+                        description: |-
+                          Redirect sends layer downloads to presigned S3 URLs: clients fetch
+                          them straight from the bucket. Clients must reach the endpoint.
+                        type: boolean
+                      region:
+                        description: Region. Defaults to "us-east-1".
+                        type: string
+                      secretRef:
+                        description: |-
+                          SecretRef names a Secret with AWS_ACCESS_KEY_ID and
+                          AWS_SECRET_ACCESS_KEY.
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - bucket
+                    - secretRef
+                    type: object
                   size:
                     anyOf:
                     - type: integer
@@ -2148,6 +2238,19 @@ spec:
                 pattern: ^(0|([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$
                 type: string
             type: object
+            x-kubernetes-validations:
+            - message: more than one replica needs spec.database (cluster mode)
+              rule: '!has(self.replicas) || self.replicas <= 1 || has(self.database)'
+            - message: more than one replica needs storage.s3 or a ReadWriteMany volume
+              rule: '!has(self.replicas) || self.replicas <= 1 || (has(self.storage)
+                && (has(self.storage.s3) || (has(self.storage.accessModes) && self.storage.accessModes.exists(m,
+                m == ''ReadWriteMany''))))'
+            - message: storage.s3 needs spec.database
+              rule: '!has(self.storage) || !has(self.storage.s3) || has(self.database)'
+            - message: in cluster mode back up the S3 bucket and PostgreSQL; spec.backup
+                does not apply
+              rule: '!has(self.database) || !has(self.backup) || !has(self.backup.enabled)
+                || !self.backup.enabled'
           status:
             description: RegistryStatus defines the observed state of Registry.
             properties:
@@ -2246,8 +2349,11 @@ spec:
                   or Degraded.'
                 type: string
               ready:
-                description: Ready is true when the registry pod is ready.
+                description: Ready is true when at least one registry pod is ready.
                 type: boolean
+              replicas:
+                description: Replicas is "ready/desired", e.g. "3/3".
+                type: string
               serviceName:
                 description: ServiceName is the name of the managed Service.
                 type: string
@@ -2354,6 +2460,18 @@ rules:
   - networking.k8s.io
   resources:
   - ingresses
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
   verbs:
   - create
   - delete
