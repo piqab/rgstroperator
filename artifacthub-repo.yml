@@ -1,8 +1,7 @@
 # Artifact Hub repository metadata, pushed next to the chart by the release
 # workflow (oci://ghcr.io/piqab/charts/rgstroperator:artifacthub.io).
-# After adding the repository on artifacthub.io, put its ID here to get the
-# "Verified publisher" badge:
-# repositoryID: 00000000-0000-0000-0000-000000000000
+# repositoryID (from artifacthub.io) gives the "Verified publisher" badge.
+repositoryID: a866ed9d-64c5-4055-b2ed-e6a42d7da0fa
 owners:
   - name: piqab
     email: piqabot@gmail.com

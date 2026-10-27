@@ -1,5 +1,7 @@
 # rgstroperator
 
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/rgstroperator)](https://artifacthub.io/packages/search?repo=rgstroperator)
+
 Kubernetes-оператор для [rgstr](https://github.com/piqab/rgstr), минималистичного OCI/Docker container registry.
 
 Вы описываете реестр одним ресурсом `Registry`. Оператор создаёт и поддерживает:
@@ -36,7 +38,7 @@ helm install rgstroperator oci://ghcr.io/piqab/charts/rgstroperator \
   -n rgstroperator-system --create-namespace
 ```
 
-Настройки чарта (ресурсы, nodeSelector, tolerations, imagePullSecrets) описаны в [values.yaml](charts/rgstroperator/values.yaml).
+Настройки чарта (ресурсы, nodeSelector, tolerations, imagePullSecrets) описаны в [values.yaml](charts/rgstroperator/values.yaml). Чарт также есть на [Artifact Hub](https://artifacthub.io/packages/search?repo=rgstroperator).
 
 Проверка:
 
