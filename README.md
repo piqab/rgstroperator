@@ -1,20 +1,22 @@
 # rgstroperator
 
+**English** | [Русский](README.ru.md)
+
 [![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/rgstroperator)](https://artifacthub.io/packages/search?repo=rgstroperator)
 
-Kubernetes-оператор для [rgstr](https://github.com/piqab/rgstr), минималистичного OCI/Docker container registry.
+A Kubernetes operator for [rgstr](https://github.com/piqab/rgstr), a minimalist OCI/Docker container registry.
 
-Вы описываете реестр одним ресурсом `Registry`. Оператор создаёт и поддерживает:
+You describe a registry with a single `Registry` resource. The operator creates and maintains:
 
-- **хранилище:** `PersistentVolumeClaim` с данными, который по умолчанию переживает удаление ресурса;
-- **секрет аутентификации:** ключ подписи токенов и временный пароль первого администратора генерируются сами;
-- **вход через LDAP / Active Directory и единый вход (OIDC)** с ролями по группам;
-- **Deployment и Service** rgstr, в том числе [кластер из нескольких реплик](#кластер-ha) на S3 и PostgreSQL;
-- **Ingress** с TLS, в том числе через cert-manager;
-- **метрики** Prometheus и `ServiceMonitor`;
-- **резервные копии:** в S3 силами самого rgstr (без CSI-драйвера), CSI `VolumeSnapshot` по расписанию или `RecurringJob` в Longhorn.
+- **storage:** a `PersistentVolumeClaim` with the data, which by default survives deletion of the resource;
+- **auth secret:** the token signing key and the temporary password of the first administrator are generated automatically;
+- **LDAP / Active Directory sign-in and single sign-on (OIDC)** with group-based roles;
+- **Deployment and Service** for rgstr, including a [multi-replica cluster](#cluster-ha) on S3 and PostgreSQL;
+- **Ingress** with TLS, including via cert-manager;
+- Prometheus **metrics** and a `ServiceMonitor`;
+- **backups:** to S3 by rgstr itself (no CSI driver needed), scheduled CSI `VolumeSnapshot`s, or a Longhorn `RecurringJob`.
 
-Состояние реестра (фаза, URL, версия rgstr, последняя копия) видно в `kubectl get registry`.
+The registry state (phase, URL, rgstr version, last backup) is shown by `kubectl get registry`.
 
 ```
 $ kubectl get rgstr
@@ -22,33 +24,33 @@ NAME          PHASE     READY   VERSION   URL                            IMAGE  
 my-registry   Running   true    v1.9.0    https://registry.example.com   ghcr.io/piqab/rgstr:1.9.0   5m
 ```
 
-## Установка
+## Installation
 
-**Требования:** Kubernetes 1.27+.
+**Requirements:** Kubernetes 1.27+.
 
-Вариант 1. Через kubectl, одним манифестом (CRD, RBAC и Deployment оператора):
+Option 1. With kubectl, as a single manifest (CRD, RBAC and the operator Deployment):
 
 ```bash
 kubectl apply -f https://github.com/piqab/rgstroperator/releases/latest/download/operator.yaml
 ```
 
-Вариант 2. Через Helm:
+Option 2. With Helm:
 
 ```bash
 helm install rgstroperator oci://ghcr.io/piqab/charts/rgstroperator \
   -n rgstroperator-system --create-namespace
 ```
 
-Настройки чарта (ресурсы, nodeSelector, tolerations, imagePullSecrets) описаны в [values.yaml](charts/rgstroperator/values.yaml). Чарт также есть на [Artifact Hub](https://artifacthub.io/packages/search?repo=rgstroperator).
+Chart settings (resources, nodeSelector, tolerations, imagePullSecrets) are described in [values.yaml](charts/rgstroperator/values.yaml). The chart is also available on [Artifact Hub](https://artifacthub.io/packages/search?repo=rgstroperator).
 
-Проверка:
+Verify:
 
 ```bash
 kubectl -n rgstroperator-system get pods
 kubectl -n rgstroperator-system logs deploy/rgstroperator
 ```
 
-## Быстрый старт
+## Quick start
 
 ```yaml
 apiVersion: registry.rgstr.io/v1alpha1
@@ -65,80 +67,80 @@ spec:
 
 ```bash
 kubectl apply -f my-registry.yaml
-kubectl get registry my-registry -w        # ждём PHASE=Running
+kubectl get registry my-registry -w        # wait for PHASE=Running
 
-# временный пароль администратора "admin":
+# temporary password of the "admin" administrator:
 kubectl get secret my-registry-auth -o jsonpath='{.data.RGSTR_ADMIN_PASSWORD}' | base64 -d
 
 kubectl port-forward svc/my-registry 5000:5000
-# http://localhost:5000/ui: войти как admin и задать постоянный пароль
+# http://localhost:5000/ui: sign in as admin and set a permanent password
 ```
 
-Полный пример со всеми опциями лежит в [config/samples/registry_v1alpha1_registry.yaml](config/samples/registry_v1alpha1_registry.yaml).
+A full example with all options is in [config/samples/registry_v1alpha1_registry.yaml](config/samples/registry_v1alpha1_registry.yaml).
 
-## Спецификация
+## Specification
 
-| Поле | По умолчанию | Описание |
+| Field | Default | Description |
 |---|---|---|
-| `image` | `ghcr.io/piqab/rgstr:1.9.0` | Образ rgstr. По умолчанию это релиз, с которым протестирована эта версия оператора |
-| `imagePullPolicy`, `imagePullSecrets` | `IfNotPresent` | Скачивание образа rgstr |
-| `replicas` | `1` | `0` останавливает реестр. Больше одной — только в [режиме кластера](#кластер-ha) |
-| `database.urlSecretRef` | — | PostgreSQL: включает [режим кластера](#кластер-ha) |
-| `storage.s3.*` | — | Данные в бакете вместо тома (кластер) |
-| `port` | `5000` | Порт rgstr и Service |
-| `serviceType` | `ClusterIP` | `ClusterIP`, `NodePort` или `LoadBalancer` |
-| `storage.size` | `10Gi` | Размер тома. Увеличение расширяет PVC, если StorageClass это позволяет |
-| `storage.storageClassName` | класс по умолчанию | Например, `longhorn` |
+| `image` | `ghcr.io/piqab/rgstr:1.9.0` | rgstr image. Defaults to the release this operator version was tested with |
+| `imagePullPolicy`, `imagePullSecrets` | `IfNotPresent` | Pulling the rgstr image |
+| `replicas` | `1` | `0` stops the registry. More than one only in [cluster mode](#cluster-ha) |
+| `database.urlSecretRef` | — | PostgreSQL: enables [cluster mode](#cluster-ha) |
+| `storage.s3.*` | — | Data in a bucket instead of a volume (cluster) |
+| `port` | `5000` | rgstr and Service port |
+| `serviceType` | `ClusterIP` | `ClusterIP`, `NodePort` or `LoadBalancer` |
+| `storage.size` | `10Gi` | Volume size. Increasing it expands the PVC if the StorageClass allows it |
+| `storage.storageClassName` | default class | For example, `longhorn` |
 | `storage.accessModes` | `[ReadWriteOnce]` | |
-| `storage.existingClaim` | — | Использовать существующий PVC, например восстановленный из копии |
-| `storage.retainOnDelete` | `true` | Сохранять PVC и сгенерированный секрет при удалении `Registry` |
-| `auth.enabled` | `false` | Включить аутентификацию |
-| `auth.secretRef.name` | создаётся `<name>-auth` | Свой Secret. Все его ключи становятся переменными окружения rgstr |
-| `auth.adminUser` | `admin` | Имя первого администратора |
-| `auth.admins`, `auth.readOnlyUsers` | — | Списки администраторов и пользователей только на чтение |
-| `auth.tokenTTL` | как в rgstr | Время жизни токенов `docker login` |
-| `auth.sessionTTL` | как в rgstr (12h) | Время жизни сессий веб-админки |
-| `auth.realm` | `<URL>/v2/auth` | URL токен-эндпоинта |
-| `auth.ldap.*` | — | Вход по паролю LDAP / AD, см. [LDAP](#ldap-и-active-directory) |
-| `auth.oidc.*` | — | Вход в веб-админку через OpenID Connect, см. [Единый вход](#единый-вход-oidc) |
-| `gcInterval` | `1h` | Интервал сборки мусора, `0` выключает её |
-| `uploadTTL` | `24h` | Время жизни незавершённых загрузок |
-| `publicRepos` | — | Glob-паттерны репозиториев с анонимным pull, например `public/**` |
-| `trustedProxies` | — | Сети, которым доверяется `X-Forwarded-For`, например CIDR ingress-контроллера |
-| `env` | — | Дополнительные переменные rgstr. Они добавляются последними и переопределяют остальные |
-| `resources` | — | Запросы и лимиты CPU/памяти |
+| `storage.existingClaim` | — | Use an existing PVC, for example one restored from a backup |
+| `storage.retainOnDelete` | `true` | Keep the PVC and the generated secret when the `Registry` is deleted |
+| `auth.enabled` | `false` | Enable authentication |
+| `auth.secretRef.name` | `<name>-auth` is created | Your own Secret. All its keys become rgstr environment variables |
+| `auth.adminUser` | `admin` | Name of the first administrator |
+| `auth.admins`, `auth.readOnlyUsers` | — | Lists of administrators and read-only users |
+| `auth.tokenTTL` | as in rgstr | Lifetime of `docker login` tokens |
+| `auth.sessionTTL` | as in rgstr (12h) | Lifetime of web admin sessions |
+| `auth.realm` | `<URL>/v2/auth` | Token endpoint URL |
+| `auth.ldap.*` | — | LDAP / AD password sign-in, see [LDAP](#ldap-and-active-directory) |
+| `auth.oidc.*` | — | Web admin sign-in via OpenID Connect, see [Single sign-on](#single-sign-on-oidc) |
+| `gcInterval` | `1h` | Garbage collection interval, `0` disables it |
+| `uploadTTL` | `24h` | Lifetime of incomplete uploads |
+| `publicRepos` | — | Glob patterns of repositories with anonymous pull, for example `public/**` |
+| `trustedProxies` | — | Networks trusted for `X-Forwarded-For`, for example the ingress controller CIDR |
+| `env` | — | Extra rgstr variables. They are added last and override the others |
+| `resources` | — | CPU/memory requests and limits |
 | `pod.*` | — | `nodeSelector`, `tolerations`, `affinity`, `securityContext`, `containerSecurityContext`, `annotations`, `labels`, `priorityClassName`, `serviceAccountName` |
-| `ingress.*` | выключен | См. [Ingress и TLS](#ingress-и-tls) |
-| `metrics.*` | выключены | См. [Метрики](#метрики) |
-| `backup.*` | выключены | См. [Резервные копии](#резервные-копии) |
+| `ingress.*` | disabled | See [Ingress and TLS](#ingress-and-tls) |
+| `metrics.*` | disabled | See [Metrics](#metrics) |
+| `backup.*` | disabled | See [Backups](#backups) |
 
-Справка по любому полю прямо из кластера: `kubectl explain registry.spec.backup`.
+Reference for any field, straight from the cluster: `kubectl explain registry.spec.backup`.
 
-### Что создаётся
+### What gets created
 
-| Ресурс | Имя | Удаляется вместе с `Registry` |
+| Resource | Name | Deleted with the `Registry` |
 |---|---|---|
-| `PersistentVolumeClaim` | `<name>-data` или `storage.existingClaim` (не создаётся при `storage.s3`) | нет, если не задано `retainOnDelete: false` |
-| `Secret` | `<name>-auth` (если нет `auth.secretRef`) | нет, если не задано `retainOnDelete: false` |
-| `Deployment`, `Service` | `<name>` | да |
-| `Ingress` | `<name>` | да |
-| `PodDisruptionBudget` | `<name>` (при `replicas` больше 1) | да |
-| `ServiceMonitor` | `<name>` | да |
-| `VolumeSnapshot` | `<name>-<дата>-<время>` | нет |
-| Longhorn `RecurringJob` | в `longhorn-system` | да (через finalizer) |
+| `PersistentVolumeClaim` | `<name>-data` or `storage.existingClaim` (not created with `storage.s3`) | no, unless `retainOnDelete: false` is set |
+| `Secret` | `<name>-auth` (if there is no `auth.secretRef`) | no, unless `retainOnDelete: false` is set |
+| `Deployment`, `Service` | `<name>` | yes |
+| `Ingress` | `<name>` | yes |
+| `PodDisruptionBudget` | `<name>` (when `replicas` is greater than 1) | yes |
+| `ServiceMonitor` | `<name>` | yes |
+| `VolumeSnapshot` | `<name>-<date>-<time>` | no |
+| Longhorn `RecurringJob` | in `longhorn-system` | yes (via a finalizer) |
 
-Оператор поддерживает созданные объекты в нужном состоянии: ручные изменения откатываются при следующей сверке, не реже раза в 5 минут.
+The operator keeps the objects it creates in the desired state: manual changes are reverted on the next reconcile, at least every 5 minutes.
 
-## Аутентификация
+## Authentication
 
-С `auth.enabled: true` и без `secretRef` оператор создаёт Secret `<name>-auth`:
+With `auth.enabled: true` and no `secretRef`, the operator creates the Secret `<name>-auth`:
 
-- `RGSTR_AUTH_SECRET`: случайный ключ подписи токенов;
-- `RGSTR_ADMIN_PASSWORD`: временный пароль первого администратора. При первом входе rgstr требует его сменить.
+- `RGSTR_AUTH_SECRET`: a random token signing key;
+- `RGSTR_ADMIN_PASSWORD`: the temporary password of the first administrator. rgstr requires changing it on first sign-in.
 
-Оператор никогда не перезаписывает этот Secret. Пользователи, роли и пароли хранятся в томе rgstr, а управляются через веб-админку (`/ui`).
+The operator never overwrites this Secret. Users, roles and passwords are stored on the rgstr volume and managed through the web admin (`/ui`).
 
-Свой Secret ([пример](config/samples/registry_auth_secret.yaml)) подключается так:
+To use your own Secret ([example](config/samples/registry_auth_secret.yaml)):
 
 ```yaml
 auth:
@@ -146,11 +148,11 @@ auth:
   secretRef: {name: my-registry-auth}
 ```
 
-При изменении Secret оператор перезапускает rgstr. То же для Secret-ов, на которые ссылаются `auth.ldap`, `auth.oidc` и `backup.s3`.
+When the Secret changes, the operator restarts rgstr. The same applies to the Secrets referenced by `auth.ldap`, `auth.oidc` and `backup.s3`.
 
-### LDAP и Active Directory
+### LDAP and Active Directory
 
-docker login и веб-админка принимают пароль из каталога. Пользователи появляются в rgstr при первом входе; локальные пользователи (первый администратор, `RGSTR_USERS`, созданные в админке) всегда главнее одноимённых из каталога.
+docker login and the web admin accept the directory password. Users appear in rgstr on first sign-in; local users (the first administrator, `RGSTR_USERS`, users created in the web admin) always take precedence over directory users with the same name.
 
 ```yaml
 auth:
@@ -162,16 +164,16 @@ auth:
     baseDN: DC=corp,DC=example
     userFilter: (&(objectClass=user)(sAMAccountName=%s))
     adminGroups: [Registry-Admins]
-    allowedGroups: [Developers]      # кого вообще пускать
+    allowedGroups: [Developers]      # who is allowed in at all
     # readOnlyGroups: [...]
     # defaultRole: user
 ```
 
-Для OpenLDAP без `memberOf` задайте `groupFilter: (&(objectClass=groupOfNames)(member=%s))` и `groupBaseDN`. Все поля и примеры есть в [README rgstr](https://github.com/piqab/rgstr#ldap-и-active-directory).
+For OpenLDAP without `memberOf`, set `groupFilter: (&(objectClass=groupOfNames)(member=%s))` and `groupBaseDN`. All fields and examples are in the [rgstr README](https://github.com/piqab/rgstr#ldap-and-active-directory).
 
-### Единый вход (OIDC)
+### Single sign-on (OIDC)
 
-На странице входа появляется кнопка «Войти через …». Адрес возврата по умолчанию `<status.url>/ui/oidc/callback`, его нужно зарегистрировать у провайдера.
+A "Sign in with …" button appears on the sign-in page. The callback URL defaults to `<status.url>/ui/oidc/callback` and must be registered with the provider.
 
 ```yaml
 auth:
@@ -184,9 +186,9 @@ auth:
     adminGroups: [registry-admins]
 ```
 
-Docker не умеет входить через браузер: пользователь SSO создаёт в веб-админке **CLI-секрет** (кнопка в шапке) и использует его как пароль в `docker login`.
+Docker cannot sign in through a browser: an SSO user creates a **CLI secret** in the web admin (button in the header) and uses it as the password for `docker login`.
 
-## Ingress и TLS
+## Ingress and TLS
 
 ```yaml
 ingress:
@@ -194,20 +196,20 @@ ingress:
   host: registry.example.com
   className: nginx
   tls:
-    clusterIssuer: letsencrypt     # cert-manager; или secretName: my-tls
+    clusterIssuer: letsencrypt     # cert-manager; or secretName: my-tls
 ```
 
-- **Зачем TLS:** kubelet и Docker без настройки `insecure-registries` скачивают образы только по HTTPS, поэтому TLS включён по умолчанию.
-- **Сертификат:** с `clusterIssuer` или `issuer` его выпускает cert-manager в Secret `<name>-tls`.
-- **Класс `nginx`:** оператор снимает лимит на размер запроса и увеличивает таймауты, чтобы проходили большие слои. Свои аннотации задаются в `ingress.annotations` и имеют приоритет.
-- **Что публикуется:** только `/v2`, `/ui`, `/stats`, `/healthz` и `/favicon.ico`. `/metrics` наружу не публикуется.
-- **Адрес:** `status.url` становится `https://<host>`, и на него же указывает realm токенов.
+- **Why TLS:** without an `insecure-registries` setting, kubelet and Docker pull images only over HTTPS, so TLS is enabled by default.
+- **Certificate:** with `clusterIssuer` or `issuer`, cert-manager issues it into the Secret `<name>-tls`.
+- **`nginx` class:** the operator removes the request size limit and raises timeouts so that large layers get through. Your own annotations go in `ingress.annotations` and take precedence.
+- **What is exposed:** only `/v2`, `/ui`, `/stats`, `/healthz` and `/favicon.ico`. `/metrics` is not exposed.
+- **Address:** `status.url` becomes `https://<host>`, and the token realm points to it as well.
 
-Если перед ingress-контроллером есть ещё прокси, укажите его сети в `trustedProxies`. Тогда в журнале и для fail2ban в rgstr будут реальные IP клиентов.
+If there is another proxy in front of the ingress controller, list its networks in `trustedProxies`. Then the rgstr log and fail2ban see the real client IPs.
 
-## Кластер (HA)
+## Cluster (HA)
 
-С `spec.database` (PostgreSQL) и `spec.storage.s3` реестр работает несколькими подами: любой принимает push и pull, а падение пода, узла или обновление не прерывают ни push, ни pull.
+With `spec.database` (PostgreSQL) and `spec.storage.s3`, the registry runs as several pods: any of them accepts push and pull, and a pod failure, node failure or upgrade interrupts neither push nor pull.
 
 ```yaml
 apiVersion: registry.rgstr.io/v1alpha1
@@ -220,54 +222,54 @@ spec:
     urlSecretRef: {name: rgstr-db, key: url}   # postgres://user:pass@host:5432/rgstr?sslmode=require
   storage:
     s3:
-      bucket: registry                          # создайте заранее
-      endpoint: https://storage.yandexcloud.net # пусто: AWS S3
+      bucket: registry                          # create it beforehand
+      endpoint: https://storage.yandexcloud.net # empty: AWS S3
       region: ru-central1
       secretRef: {name: rgstr-s3}               # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
-      # redirect: true   # слои качаются клиентами прямо из S3, мимо rgstr
+      # redirect: true   # clients download layers directly from S3, bypassing rgstr
   ingress:
     enabled: true
     host: registry.example.com
     tls: {clusterIssuer: letsencrypt}
 ```
 
-Что оператор делает в этом режиме:
+What the operator does in this mode:
 
-- PVC не создаётся: данные в бакете, состояние (пользователи, проекты, настройки, сессии, журнал) — в PostgreSQL. Таблицы rgstr создаёт сам.
-- Deployment обновляется `RollingUpdate` с `maxUnavailable: 0`: новые поды поднимаются раньше, чем уходят старые.
-- Readiness — `/readyz`: под без связи с базой или S3 выходит из Service, а не отвечает ошибками.
-- `PodDisruptionBudget` (`maxUnavailable: 1`) не даёт drain-у узлов снять все поды сразу; поды разносятся по узлам и зонам (`topologySpreadConstraints`), если не задан свой `pod.affinity`.
-- `status.replicas` показывает готовые поды, например `3/3`.
+- No PVC is created: data lives in the bucket, state (users, projects, settings, sessions, log) in PostgreSQL. rgstr creates its tables itself.
+- The Deployment is updated with `RollingUpdate` and `maxUnavailable: 0`: new pods come up before old ones go away.
+- Readiness is `/readyz`: a pod that loses the database or S3 drops out of the Service instead of answering with errors.
+- A `PodDisruptionBudget` (`maxUnavailable: 1`) keeps a node drain from evicting all pods at once; pods are spread across nodes and zones (`topologySpreadConstraints`) unless you set your own `pod.affinity`.
+- `status.replicas` shows ready pods, for example `3/3`.
 
-Отказоустойчивость самих PostgreSQL и S3 — их забота: например, CloudNativePG или managed PostgreSQL и S3 с репликацией. Бэкапы в этом режиме — бэкапы базы и версионирование или репликация бакета; `spec.backup` не применяется.
+High availability of PostgreSQL and S3 themselves is up to them: for example, CloudNativePG or managed PostgreSQL, and S3 with replication. Backups in this mode are database backups plus bucket versioning or replication; `spec.backup` does not apply.
 
-Вместо S3 подойдёт том `ReadWriteMany` (CephFS, NFS): уберите `storage.s3` и задайте `storage.accessModes: [ReadWriteMany]`.
+Instead of S3, a `ReadWriteMany` volume (CephFS, NFS) works too: remove `storage.s3` and set `storage.accessModes: [ReadWriteMany]`.
 
-**Переход существующего реестра.** Остановите его (`replicas: 0`) и перенесите данные Job-ом с `rgstr migrate -from /data`, смонтировав старый PVC в `/data` и передав те же `RGSTR_DATABASE_URL` и `RGSTR_STORAGE_S3_*`; затем укажите в Registry `database` и `storage.s3`. Подробности — в [README rgstr](https://github.com/piqab/rgstr#кластер-ha).
+**Migrating an existing registry.** Stop it (`replicas: 0`) and move the data with a Job running `rgstr migrate -from /data`, mounting the old PVC at `/data` and passing the same `RGSTR_DATABASE_URL` and `RGSTR_STORAGE_S3_*`; then set `database` and `storage.s3` in the Registry. Details are in the [rgstr README](https://github.com/piqab/rgstr#cluster-ha).
 
-## Метрики
+## Metrics
 
 ```yaml
 metrics:
-  enabled: true                    # /metrics на Service (порт registry)
+  enabled: true                    # /metrics on the Service (registry port)
   serviceMonitor:
-    enabled: true                  # нужен Prometheus Operator
-    labels: {release: prometheus}  # по каким меткам Prometheus выбирает ServiceMonitor
+    enabled: true                  # requires Prometheus Operator
+    labels: {release: prometheus}  # labels Prometheus uses to select ServiceMonitors
 ```
 
-Список метрик приведён в [README rgstr](https://github.com/piqab/rgstr#метрики). Если CRD `ServiceMonitor` в кластере нет, условие `MetricsReady` об этом сообщит, а сам реестр продолжит работать.
+The list of metrics is in the [rgstr README](https://github.com/piqab/rgstr#metrics). If the `ServiceMonitor` CRD is missing from the cluster, the `MetricsReady` condition reports it, and the registry itself keeps working.
 
-## Резервные копии
+## Backups
 
-Копируется весь том: образы, пользователи, метаданные и журнал. Копии не принадлежат `Registry` и не удаляются вместе с ним.
+The whole volume is backed up: images, users, metadata and the log. Backups are not owned by the `Registry` and are not deleted with it.
 
-| Метод | Что нужно в кластере | Где копии |
+| Method | Required in the cluster | Where backups go |
 |---|---|---|
-| `S3` | ничего, только бакет | в S3-совместимом хранилище, вне кластера |
-| `VolumeSnapshot` | CSI-драйвер со snapshot-ами и external-snapshotter | обычно в той же системе хранения |
-| `Longhorn` | Longhorn | backup target Longhorn (`task: backup`) или локально (`task: snapshot`) |
+| `S3` | nothing, just a bucket | to S3-compatible storage, outside the cluster |
+| `VolumeSnapshot` | a CSI driver with snapshot support and external-snapshotter | usually the same storage system |
+| `Longhorn` | Longhorn | the Longhorn backup target (`task: backup`) or locally (`task: snapshot`) |
 
-### S3 (делает сам rgstr)
+### S3 (done by rgstr itself)
 
 ```yaml
 backup:
@@ -276,9 +278,9 @@ backup:
   schedule: "0 3 * * *"            # cron, UTC
   keep: 7
   s3:
-    bucket: backups                # создайте заранее
+    bucket: backups                # create it beforehand
     prefix: rgstr/prod
-    endpoint: https://storage.yandexcloud.net   # пусто: AWS S3
+    endpoint: https://storage.yandexcloud.net   # empty: AWS S3
     region: ru-central1
     secretRef: {name: rgstr-s3}    # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 ```
@@ -288,9 +290,9 @@ kubectl create secret generic rgstr-s3 \
   --from-literal=AWS_ACCESS_KEY_ID=... --from-literal=AWS_SECRET_ACCESS_KEY=...
 ```
 
-rgstr сам архивирует данные по расписанию на работающем реестре и удаляет копии сверх `keep`. Копии целостные: на время бэкапа сборка мусора ждёт. Подойдёт любое S3-совместимое хранилище: AWS, MinIO, Ceph, SeaweedFS, Yandex Object Storage, R2. Время последней копии оператор берёт из `/healthz` rgstr в `status.lastBackupTime`. Если очередная копия опоздала больше чем на час, условие `BackupReady` становится `False` с причиной `Overdue`. Список копий и кнопка «Сделать бэкап сейчас» есть в веб-админке на странице «Бэкапы».
+rgstr archives the data on schedule while the registry is running and deletes backups beyond `keep`. Backups are consistent: garbage collection waits while a backup is in progress. Any S3-compatible storage works: AWS, MinIO, Ceph, SeaweedFS, Yandex Object Storage, R2. The operator takes the time of the last backup from rgstr's `/healthz` into `status.lastBackupTime`. If the next backup is more than an hour late, the `BackupReady` condition becomes `False` with reason `Overdue`. The list of backups and a "Back up now" button are on the "Backups" page of the web admin.
 
-### VolumeSnapshot (любой CSI-драйвер со snapshot-ами)
+### VolumeSnapshot (any CSI driver with snapshot support)
 
 ```yaml
 backup:
@@ -298,12 +300,12 @@ backup:
   schedule: "0 3 * * *"            # cron, UTC
   keep: 7
   method: VolumeSnapshot
-  volumeSnapshotClassName: csi-snapclass   # пусто: класс по умолчанию
+  volumeSnapshotClassName: csi-snapclass   # empty: default class
 ```
 
-Оператор сам создаёт `VolumeSnapshot` по расписанию и удаляет старые сверх `keep`. Если оператор был остановлен в момент запуска, пропущенная копия делается сразу после старта. Время последней и следующей копии видно в `status.lastBackupTime` и `status.nextBackupTime`.
+The operator creates a `VolumeSnapshot` on schedule and deletes old ones beyond `keep`. If the operator was stopped at the scheduled time, the missed backup is taken right after it starts. The times of the last and next backups are shown in `status.lastBackupTime` and `status.nextBackupTime`.
 
-Нужны CRD и контроллер [external-snapshotter](https://github.com/kubernetes-csi/external-snapshotter).
+Requires the [external-snapshotter](https://github.com/kubernetes-csi/external-snapshotter) CRDs and controller.
 
 ### Longhorn
 
@@ -316,15 +318,15 @@ backup:
   keep: 7
   method: Longhorn
   longhorn:
-    task: backup          # в backup target Longhorn (S3/NFS, вне узла); snapshot: локальный снимок
+    task: backup          # to the Longhorn backup target (S3/NFS, off the node); snapshot: local snapshot
     # namespace: longhorn-system
 ```
 
-Оператор создаёт в Longhorn `RecurringJob` и подписывает на него PVC реестра. Расписание, создание копий и их ротацию берёт на себя Longhorn. Для `task: backup` в Longhorn должен быть настроен backup target.
+The operator creates a Longhorn `RecurringJob` and attaches the registry PVC to it. Longhorn handles the schedule, creating backups and rotating them. For `task: backup`, a backup target must be configured in Longhorn.
 
-### Восстановление
+### Restore
 
-Из S3: остановите реестр и запустите Job с `rgstr restore` на том же томе, затем запустите реестр снова.
+From S3: stop the registry and run a Job with `rgstr restore` on the same volume, then start the registry again.
 
 ```bash
 kubectl patch registry my-registry --type merge -p '{"spec":{"replicas":0}}'
@@ -347,7 +349,7 @@ spec:
       containers:
         - name: restore
           image: ghcr.io/piqab/rgstr:1.9.0
-          args: [restore, -force, latest]   # или имя: rgstr-backup-20261027-030000.tar
+          args: [restore, -force, latest]   # or a name: rgstr-backup-20261027-030000.tar
           env:
             - {name: RGSTR_BACKUP_TARGET, value: s3://backups/rgstr/prod}
             - {name: RGSTR_BACKUP_S3_ENDPOINT, value: https://storage.yandexcloud.net}
@@ -358,11 +360,11 @@ spec:
         - {name: data, persistentVolumeClaim: {claimName: my-registry-data}}
 ```
 
-С `-force` прежние данные переносятся в `.before-restore-<время>/` на томе. Когда восстановление проверено, их можно удалить. Восстановить можно и в новый пустой PVC без `-force`, а потом указать его в `storage.existingClaim`.
+With `-force`, the previous data is moved to `.before-restore-<time>/` on the volume. Once the restore is verified, it can be deleted. You can also restore into a new empty PVC without `-force` and then set it in `storage.existingClaim`.
 
-Из VolumeSnapshot или Longhorn: создайте PVC из копии и укажите его в `storage.existingClaim`.
+From VolumeSnapshot or Longhorn: create a PVC from the backup and set it in `storage.existingClaim`.
 
-Из VolumeSnapshot:
+From VolumeSnapshot:
 
 ```yaml
 apiVersion: v1
@@ -377,9 +379,9 @@ spec:
     name: my-registry-20261027-030000
 ```
 
-Из Longhorn: в UI Longhorn выберите **Backup → Restore** и создайте PV/PVC для восстановленного тома.
+From Longhorn: in the Longhorn UI, choose **Backup → Restore** and create a PV/PVC for the restored volume.
 
-Затем:
+Then:
 
 ```yaml
 spec:
@@ -387,76 +389,76 @@ spec:
     existingClaim: my-registry-restored
 ```
 
-## Статус и диагностика
+## Status and troubleshooting
 
 ```bash
 kubectl get rgstr
-kubectl describe registry my-registry     # условия и события
+kubectl describe registry my-registry     # conditions and events
 ```
 
-| Условие | Смысл |
+| Condition | Meaning |
 |---|---|
-| `Ready` | Под rgstr готов |
-| `StorageReady` | Том создан |
-| `AuthReady` | Секрет аутентификации на месте |
-| `IngressReady` | Ingress получил адрес |
-| `MetricsReady` | ServiceMonitor создан |
-| `BackupReady` | Расписание копий работает; `False` с причиной `Overdue`, если S3-копия опоздала |
+| `Ready` | The rgstr pod is ready |
+| `StorageReady` | The volume is created |
+| `AuthReady` | The auth secret is in place |
+| `IngressReady` | The Ingress has an address |
+| `MetricsReady` | The ServiceMonitor is created |
+| `BackupReady` | The backup schedule is working; `False` with reason `Overdue` if an S3 backup is late |
 
-`PHASE` принимает значения `Pending`, `Running`, `Stopped` (`replicas: 0`) или `Degraded` (одна из частей не удалась, причина есть в условиях и событиях).
+`PHASE` is one of `Pending`, `Running`, `Stopped` (`replicas: 0`) or `Degraded` (one of the parts failed; the reason is in the conditions and events).
 
-## Удаление
+## Uninstall
 
 ```bash
-kubectl delete registry my-registry   # PVC, auth-секрет и копии остаются
+kubectl delete registry my-registry   # the PVC, auth secret and backups remain
 kubectl delete -f https://github.com/piqab/rgstroperator/releases/latest/download/operator.yaml
-# или: helm uninstall rgstroperator -n rgstroperator-system
+# or: helm uninstall rgstroperator -n rgstroperator-system
 ```
 
-Удаление CRD (`make uninstall`) удаляет все ресурсы `Registry` в кластере.
+Deleting the CRD (`make uninstall`) deletes all `Registry` resources in the cluster.
 
-## Разработка
+## Development
 
-**Требования:** Go 1.26+, make, Docker. Для e2e нужны также kubectl и curl.
+**Requirements:** Go 1.26+, make, Docker. e2e also needs kubectl and curl.
 
-Инструменты (`controller-gen`, `setup-envtest`, `kind`, `helm`) ставятся в `./bin` автоматически.
+Tools (`controller-gen`, `setup-envtest`, `kind`, `helm`) are installed into `./bin` automatically.
 
-| Команда | Что делает |
+| Command | What it does |
 |---|---|
-| `make generate manifests` | Перегенерировать deepcopy, CRD и RBAC из маркеров kubebuilder |
-| `make bundle` | Собрать `deploy/operator.yaml` и обновить CRD, RBAC и версию в чарте |
-| `make test` | Unit- и envtest-тесты (настоящий kube-apiserver, без кластера) |
-| `make e2e` | Полный тест в kind: установка, вход, push, метрики, сохранность данных |
-| `make e2e-ha` | Кластер в kind: 3 реплики на PostgreSQL и S3, pull без сбоев при обновлении и удалении подов |
-| `make chart` | `helm lint` и пакет чарта в `dist/` |
-| `make run` | Запустить оператор локально против текущего kubeconfig |
-| `make install`, `make sample` | Установить CRD и применить пример |
-| `make docker-build` | Собрать образ оператора |
+| `make generate manifests` | Regenerate deepcopy, CRD and RBAC from kubebuilder markers |
+| `make bundle` | Build `deploy/operator.yaml` and update the CRD, RBAC and version in the chart |
+| `make test` | Unit and envtest tests (a real kube-apiserver, no cluster) |
+| `make e2e` | Full test in kind: install, sign-in, push, metrics, data persistence |
+| `make e2e-ha` | Cluster in kind: 3 replicas on PostgreSQL and S3, uninterrupted pull during upgrades and pod deletion |
+| `make chart` | `helm lint` and chart package into `dist/` |
+| `make run` | Run the operator locally against the current kubeconfig |
+| `make install`, `make sample` | Install the CRD and apply the sample |
+| `make docker-build` | Build the operator image |
 
-Варианты запуска e2e:
+e2e run options:
 
 ```bash
-RGSTR_SRC=../rgstr make e2e     # rgstr собирается из исходников
-INSTALL=helm make e2e           # оператор ставится чартом
-KEEP=1 make e2e                 # оставить кластер kind после теста
+RGSTR_SRC=../rgstr make e2e     # rgstr is built from source
+INSTALL=helm make e2e           # the operator is installed with the chart
+KEEP=1 make e2e                 # keep the kind cluster after the test
 ```
 
-CRD, RBAC, `deploy/operator.yaml` и чарт генерируются из кода, CI проверяет, что они закоммичены актуальными.
+The CRD, RBAC, `deploy/operator.yaml` and the chart are generated from code; CI checks that they are committed up to date.
 
-### Релиз
+### Release
 
-Версия хранится в файле `VERSION`. После `make bundle` и коммита:
+The version is stored in the `VERSION` file. After `make bundle` and a commit:
 
 ```bash
 git tag v$(cat VERSION) && git push origin v$(cat VERSION)
 ```
 
-GitHub Actions после этого:
+GitHub Actions then:
 
-- собирает образ `ghcr.io/piqab/rgstroperator:<версия>` для amd64 и arm64;
-- создаёт Release с `operator.yaml` и пакетом чарта;
-- публикует чарт в `oci://ghcr.io/piqab/charts`.
+- builds the image `ghcr.io/piqab/rgstroperator:<version>` for amd64 and arm64;
+- creates a Release with `operator.yaml` and the chart package;
+- publishes the chart to `oci://ghcr.io/piqab/charts`.
 
-## Лицензия
+## License
 
 [MIT](LICENSE)
