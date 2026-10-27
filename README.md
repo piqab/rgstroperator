@@ -118,10 +118,11 @@ kubectl port-forward svc/my-registry 5000:5000
 
 | Ресурс | Имя | Удаляется вместе с `Registry` |
 |---|---|---|
-| `PersistentVolumeClaim` | `<name>-data` или `storage.existingClaim` | нет, если не задано `retainOnDelete: false` |
+| `PersistentVolumeClaim` | `<name>-data` или `storage.existingClaim` (не создаётся при `storage.s3`) | нет, если не задано `retainOnDelete: false` |
 | `Secret` | `<name>-auth` (если нет `auth.secretRef`) | нет, если не задано `retainOnDelete: false` |
 | `Deployment`, `Service` | `<name>` | да |
 | `Ingress` | `<name>` | да |
+| `PodDisruptionBudget` | `<name>` (при `replicas` больше 1) | да |
 | `ServiceMonitor` | `<name>` | да |
 | `VolumeSnapshot` | `<name>-<дата>-<время>` | нет |
 | Longhorn `RecurringJob` | в `longhorn-system` | да (через finalizer) |
