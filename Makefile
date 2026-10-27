@@ -7,7 +7,7 @@ CONTROLLER_GEN := $(BIN)/controller-gen
 SETUP_ENVTEST  := $(BIN)/setup-envtest
 ENVTEST_K8S    ?= 1.31.x
 
-.PHONY: all generate manifests bundle build test run install uninstall \
+.PHONY: all generate manifests bundle build test e2e run install uninstall \
         sample deploy undeploy docker-build docker-push tools
 
 all: generate manifests bundle build
@@ -33,6 +33,10 @@ build:
 test: $(SETUP_ENVTEST)
 	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S) --bin-dir $(CURDIR)/testbin -p path)" \
 		go test ./... -coverprofile cover.out
+
+## End-to-end test in a kind cluster (RGSTR_SRC=../rgstr builds rgstr from source)
+e2e: bundle $(BIN)/kind
+	./hack/e2e.sh
 
 ## Run the operator locally against the current kubeconfig
 run: install
@@ -72,6 +76,9 @@ tools: $(CONTROLLER_GEN) $(SETUP_ENVTEST)
 
 $(CONTROLLER_GEN):
 	GOBIN=$(BIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5
+
+$(BIN)/kind:
+	GOBIN=$(BIN) go install sigs.k8s.io/kind@v0.24.0
 
 $(SETUP_ENVTEST):
 	GOBIN=$(BIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.19
