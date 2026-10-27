@@ -1,304 +1,51 @@
 # rgstroperator
 
-Kubernetes-оператор для [rgstr](https://github.com/piqab/rgstr) — минималистичного OCI/Docker container registry.
+Kubernetes-оператор для [rgstr](https://github.com/piqab/rgstr), минималистичного OCI/Docker container registry.
 
-Оператор управляет жизненным циклом реестра через Custom Resource `Registry`:
-создаёт `Deployment`, `Service` и `PersistentVolumeClaim`, читает секреты аутентификации из Kubernetes Secret.
+Вы описываете реестр одним ресурсом `Registry`. Оператор создаёт и поддерживает:
 
----
+- **хранилище:** `PersistentVolumeClaim` с данными, который по умолчанию переживает удаление ресурса;
+- **секрет аутентификации:** ключ подписи токенов и временный пароль первого администратора генерируются сами;
+- **Deployment и Service** rgstr;
+- **Ingress** с TLS, в том числе через cert-manager;
+- **метрики** Prometheus и `ServiceMonitor`;
+- **резервные копии** тома: CSI `VolumeSnapshot` по расписанию или `RecurringJob` в Longhorn.
 
-## Быстрый деплой через kubectl (образ уже запушен)
+Состояние реестра (фаза, URL, версия rgstr, последняя копия) видно в `kubectl get registry`.
 
-Образ оператора: `ghcr.io/piqab/rgstroperator:latest`
+```
+$ kubectl get rgstr
+NAME          PHASE     READY   VERSION   URL                            IMAGE                       AGE
+my-registry   Running   true    v1.7.0    https://registry.example.com   ghcr.io/piqab/rgstr:1.7.0   5m
+```
 
-### 1. Задеплоить оператор (CRD + RBAC + Deployment одной командой)
+## Установка
+
+**Требования:** Kubernetes 1.27+.
+
+Вариант 1. Через kubectl, одним манифестом (CRD, RBAC и Deployment оператора):
 
 ```bash
-kubectl apply -f deploy/operator.yaml
+kubectl apply -f https://github.com/piqab/rgstroperator/releases/latest/download/operator.yaml
 ```
 
-Файл `deploy/operator.yaml` содержит всё необходимое: CRD, Namespace, ServiceAccount, ClusterRole, ClusterRoleBinding и Deployment оператора.
-
-Проверить, что под поднялся:
+Вариант 2. Через Helm:
 
 ```bash
-kubectl get pods -n rgstroperator-system
-kubectl logs -n rgstroperator-system deploy/rgstroperator -f
+helm install rgstroperator oci://ghcr.io/piqab/charts/rgstroperator \
+  -n rgstroperator-system --create-namespace
 ```
 
-### 2. Создать Registry CR
+Настройки чарта (ресурсы, nodeSelector, tolerations, imagePullSecrets) описаны в [values.yaml](charts/rgstroperator/values.yaml).
+
+Проверка:
 
 ```bash
-kubectl apply -f config/samples/registry_v1alpha1_registry.yaml
+kubectl -n rgstroperator-system get pods
+kubectl -n rgstroperator-system logs deploy/rgstroperator
 ```
 
-Проверить состояние:
-
-```bash
-kubectl get registries
-kubectl get deploy,svc,pvc
-```
-
-### 3. Доступ к реестру
-
-```bash
-kubectl port-forward svc/my-registry 5000:5000
-docker push localhost:5000/myrepo/image:tag
-```
-
-### Удалить всё
-
-```bash
-kubectl delete -f config/samples/registry_v1alpha1_registry.yaml
-kubectl delete -f deploy/operator.yaml
-```
-
----
-
-## Структура проекта
-
-```
-rgstroperator/
-├── api/v1alpha1/
-│   ├── groupversion_info.go          — group/version схема
-│   ├── registry_types.go             — CRD типы (Registry, RegistrySpec, RegistryStatus)
-│   └── zz_generated_deepcopy.go      — deepcopy
-├── internal/controller/
-│   └── registry_controller.go        — reconcile loop
-├── cmd/main.go                        — entrypoint, manager setup
-├── deploy/
-│   └── operator.yaml                 — CRD + RBAC + Deployment (всё в одном файле)
-├── config/
-│   └── samples/
-│       ├── registry_v1alpha1_registry.yaml
-│       └── registry_auth_secret.yaml
-├── Dockerfile
-├── Makefile
-└── go.mod
-```
-
----
-
-## Варианты запуска
-
-### Вариант 1 — Локально (без сборки образа оператора)
-
-Оператор работает на вашей машине и управляет кластером через `kubeconfig`.
-Образ оператора **не нужен**.
-
-**Требования:** Go 1.23+, kubectl, доступ к кластеру.
-
-```bash
-# 1. Зависимости
-go mod tidy
-
-# 2. Установить CRD и RBAC в кластер
-make install-cluster
-
-# 3. Запустить оператор локально
-make run
-```
-
-В другом терминале:
-
-```bash
-# Создать реестр
-make sample
-# или
-kubectl apply -f config/samples/registry_v1alpha1_registry.yaml
-
-# Проверить состояние
-kubectl get registries
-kubectl get deploy,svc,pvc
-```
-
-Для запуска CRD + оператора одной командой:
-
-```bash
-make dev
-```
-
----
-
-### Вариант 2 — In-cluster (оператор внутри Kubernetes)
-
-Оператор собирается в Docker-образ, пушится в container registry и деплоится в кластер как `Deployment`.
-
-**Требования:** Docker, kubectl.
-
-Выберите реестр из вариантов ниже, затем переходите к [Шагу 2](#шаг-2-собрать-образ).
-
----
-
-#### Реестры — авторизация
-
-**ghcr.io (GitHub)**
-
-Создайте PAT: **GitHub → Settings → Developer settings → Personal access tokens → Generate new token**  
-Права: `write:packages`, `read:packages`.
-
-```bash
-export CR_PAT=ghp_YOUR_TOKEN
-echo $CR_PAT | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
-```
-
-Имя образа: `ghcr.io/YOUR_GITHUB_USERNAME/rgstroperator:latest`
-
----
-
-**Docker Hub**
-
-```bash
-docker login -u YOUR_DOCKERHUB_USERNAME
-# введите пароль или Access Token (hub.docker.com → Account Settings → Security)
-```
-
-Имя образа: `YOUR_DOCKERHUB_USERNAME/rgstroperator:latest`
-
----
-
-**GitLab Container Registry**
-
-```bash
-docker login registry.gitlab.com -u YOUR_GITLAB_USERNAME -p YOUR_ACCESS_TOKEN
-```
-
-Имя образа: `registry.gitlab.com/YOUR_NAMESPACE/YOUR_PROJECT/rgstroperator:latest`
-
----
-
-**Yandex Container Registry**
-
-```bash
-# Авторизация через yc CLI
-yc iam create-token | docker login --username iam --password-stdin cr.yandex
-```
-
-Имя образа: `cr.yandex/YOUR_REGISTRY_ID/rgstroperator:latest`
-
----
-
-**Свой реестр (self-hosted)**
-
-Если у вас уже развёрнут реестр (например, сам rgstr или distribution/distribution):
-
-```bash
-docker login YOUR_REGISTRY_HOST:PORT -u user -p password
-```
-
-Имя образа: `YOUR_REGISTRY_HOST:PORT/rgstroperator:latest`
-
-Для HTTP-реестра без TLS добавьте в `/etc/docker/daemon.json`:
-
-```json
-{
-  "insecure-registries": ["YOUR_REGISTRY_HOST:PORT"]
-}
-```
-
----
-
-#### Шаг 2. Собрать образ
-
-Подставьте имя образа из выбранного реестра:
-
-```bash
-make docker-build IMAGE=<имя_образа> TAG=latest
-```
-
-Пример для Docker Hub:
-
-```bash
-make docker-build IMAGE=myuser/rgstroperator TAG=latest
-```
-
-#### Шаг 3. Запушить образ
-
-```bash
-make docker-push IMAGE=<имя_образа> TAG=latest
-```
-
-#### Шаг 4. Указать образ в manager.yaml
-
-Отредактируйте [config/manager/manager.yaml](config/manager/manager.yaml):
-
-```yaml
-containers:
-  - name: manager
-    image: <имя_образа>:latest  # ← сюда
-```
-
-> **Приватный реестр.** Если образ в приватном реестре, создайте `imagePullSecret` и добавьте его в `manager.yaml`:
->
-> ```bash
-> kubectl create secret docker-registry regcred \
->   --docker-server=<registry-host> \
->   --docker-username=<user> \
->   --docker-password=<password> \
->   -n rgstroperator-system
-> ```
->
-> ```yaml
-> spec:
->   imagePullSecrets:
->     - name: regcred
-> ```
-
-#### Шаг 3. Задеплоить всё в кластер
-
-```bash
-make deploy
-```
-
-Это применит:
-- CRD `registries.registry.rgstr.io`
-- `Namespace` + `ServiceAccount` `rgstroperator` в `rgstroperator-system`
-- `ClusterRole` + `ClusterRoleBinding`
-- `Deployment` оператора
-
-#### Шаг 4. Создать Registry CR
-
-```bash
-make sample
-# или
-kubectl apply -f config/samples/registry_v1alpha1_registry.yaml
-```
-
-#### Проверка
-
-```bash
-kubectl get registries
-kubectl get pods -n rgstroperator-system
-kubectl logs -n rgstroperator-system deploy/rgstroperator -f
-```
-
----
-
-### Вариант 3 — In-cluster с образом из локального кластера (kind/minikube)
-
-Для локальных кластеров можно не пушить образ в внешний реестр.
-
-**kind:**
-
-```bash
-make docker-build IMAGE=rgstroperator TAG=latest
-kind load docker-image rgstroperator:latest
-# В manager.yaml: image: rgstroperator:latest, imagePullPolicy: Never
-make deploy
-```
-
-**minikube:**
-
-```bash
-eval $(minikube docker-env)
-make docker-build IMAGE=rgstroperator TAG=latest
-# В manager.yaml: image: rgstroperator:latest, imagePullPolicy: Never
-make deploy
-```
-
----
-
-## Custom Resource: Registry
+## Быстрый старт
 
 ```yaml
 apiVersion: registry.rgstr.io/v1alpha1
@@ -307,141 +54,257 @@ metadata:
   name: my-registry
   namespace: default
 spec:
-  image: ghcr.io/piqab/rgstr:latest   # образ реестра
-  replicas: 1
-  port: 5000
-  serviceType: ClusterIP               # ClusterIP | NodePort | LoadBalancer
-
   storage:
     size: 20Gi
-    # storageClassName: standard       # если не указан — используется default class
-
-  gcInterval: "1h"
-  uploadTTL: "24h"
-
-  # Публичные репозитории (анонимный pull без авторизации)
-  # publicRepos: "public/**"
-
-  # Аутентификация
-  # auth:
-  #   enabled: true
-  #   secretRef:
-  #     name: my-registry-auth         # Secret с RGSTR_AUTH_SECRET и RGSTR_USERS
-  #   tokenTTL: "1h"
-
-  resources:
-    requests:
-      cpu: "100m"
-      memory: "128Mi"
-    limits:
-      cpu: "500m"
-      memory: "512Mi"
+  auth:
+    enabled: true
 ```
 
-### Поля spec
+```bash
+kubectl apply -f my-registry.yaml
+kubectl get registry my-registry -w        # ждём PHASE=Running
+
+# временный пароль администратора "admin":
+kubectl get secret my-registry-auth -o jsonpath='{.data.RGSTR_ADMIN_PASSWORD}' | base64 -d
+
+kubectl port-forward svc/my-registry 5000:5000
+# http://localhost:5000/ui: войти как admin и задать постоянный пароль
+```
+
+Полный пример со всеми опциями лежит в [config/samples/registry_v1alpha1_registry.yaml](config/samples/registry_v1alpha1_registry.yaml).
+
+## Спецификация
 
 | Поле | По умолчанию | Описание |
 |---|---|---|
-| `image` | `ghcr.io/piqab/rgstr:latest` | Образ реестра |
-| `replicas` | `1` | Количество подов |
-| `port` | `5000` | Порт реестра |
-| `serviceType` | `ClusterIP` | Тип Kubernetes Service |
-| `storage.size` | `10Gi` | Размер PVC |
-| `storage.storageClassName` | default class | StorageClass |
+| `image` | `ghcr.io/piqab/rgstr:1.7.0` | Образ rgstr. По умолчанию это релиз, с которым протестирована эта версия оператора |
+| `imagePullPolicy`, `imagePullSecrets` | `IfNotPresent` | Скачивание образа rgstr |
+| `replicas` | `1` | `1` запускает реестр, `0` останавливает. rgstr работает одним процессом на том, поэтому больше одной реплики не бывает |
+| `port` | `5000` | Порт rgstr и Service |
+| `serviceType` | `ClusterIP` | `ClusterIP`, `NodePort` или `LoadBalancer` |
+| `storage.size` | `10Gi` | Размер тома. Увеличение расширяет PVC, если StorageClass это позволяет |
+| `storage.storageClassName` | класс по умолчанию | Например, `longhorn` |
+| `storage.accessModes` | `[ReadWriteOnce]` | |
+| `storage.existingClaim` | — | Использовать существующий PVC, например восстановленный из копии |
+| `storage.retainOnDelete` | `true` | Сохранять PVC и сгенерированный секрет при удалении `Registry` |
 | `auth.enabled` | `false` | Включить аутентификацию |
-| `auth.secretRef.name` | — | Имя Secret с данными auth |
-| `auth.tokenTTL` | `1h` | Время жизни JWT-токена |
-| `auth.realm` | авто | URL токен-эндпоинта |
-| `gcInterval` | `1h` | Интервал сборки мусора |
-| `uploadTTL` | `24h` | TTL незавершённых загрузок |
-| `publicRepos` | — | Glob-паттерны публичных репо |
-| `resources` | — | CPU/memory requests и limits |
+| `auth.secretRef.name` | создаётся `<name>-auth` | Свой Secret. Все его ключи становятся переменными окружения rgstr |
+| `auth.adminUser` | `admin` | Имя первого администратора |
+| `auth.admins`, `auth.readOnlyUsers` | — | Списки администраторов и пользователей только на чтение |
+| `auth.tokenTTL` | как в rgstr | Время жизни токенов `docker login` |
+| `auth.sessionTTL` | как в rgstr (12h) | Время жизни сессий веб-админки |
+| `auth.realm` | `<URL>/v2/auth` | URL токен-эндпоинта |
+| `gcInterval` | `1h` | Интервал сборки мусора, `0` выключает её |
+| `uploadTTL` | `24h` | Время жизни незавершённых загрузок |
+| `publicRepos` | — | Glob-паттерны репозиториев с анонимным pull, например `public/**` |
+| `trustedProxies` | — | Сети, которым доверяется `X-Forwarded-For`, например CIDR ingress-контроллера |
+| `env` | — | Дополнительные переменные rgstr. Они добавляются последними и переопределяют остальные |
+| `resources` | — | Запросы и лимиты CPU/памяти |
+| `pod.*` | — | `nodeSelector`, `tolerations`, `affinity`, `securityContext`, `containerSecurityContext`, `annotations`, `labels`, `priorityClassName`, `serviceAccountName` |
+| `ingress.*` | выключен | См. [Ingress и TLS](#ingress-и-tls) |
+| `metrics.*` | выключены | См. [Метрики](#метрики) |
+| `backup.*` | выключены | См. [Резервные копии](#резервные-копии) |
 
----
+Справка по любому полю прямо из кластера: `kubectl explain registry.spec.backup`.
+
+### Что создаётся
+
+| Ресурс | Имя | Удаляется вместе с `Registry` |
+|---|---|---|
+| `PersistentVolumeClaim` | `<name>-data` или `storage.existingClaim` | нет, если не задано `retainOnDelete: false` |
+| `Secret` | `<name>-auth` (если нет `auth.secretRef`) | нет, если не задано `retainOnDelete: false` |
+| `Deployment`, `Service` | `<name>` | да |
+| `Ingress` | `<name>` | да |
+| `ServiceMonitor` | `<name>` | да |
+| `VolumeSnapshot` | `<name>-<дата>-<время>` | нет |
+| Longhorn `RecurringJob` | в `longhorn-system` | да (через finalizer) |
+
+Оператор поддерживает созданные объекты в нужном состоянии: ручные изменения откатываются при следующей сверке, не реже раза в 5 минут.
 
 ## Аутентификация
 
-Создайте Secret с bcrypt-хешами паролей (генерация в репозитории [rgstr](https://github.com/piqab/rgstr)):
+С `auth.enabled: true` и без `secretRef` оператор создаёт Secret `<name>-auth`:
 
-```bash
-# Сгенерировать хеш пароля (в директории rgstr)
-go run ./cmd/mkpasswd alice mysecret
-# → RGSTR_USERS=alice:$2a$10$...
+- `RGSTR_AUTH_SECRET`: случайный ключ подписи токенов;
+- `RGSTR_ADMIN_PASSWORD`: временный пароль первого администратора. При первом входе rgstr требует его сменить.
+
+Оператор никогда не перезаписывает этот Secret. Пользователи, роли и пароли хранятся в томе rgstr, а управляются через веб-админку (`/ui`).
+
+Свой Secret ([пример](config/samples/registry_auth_secret.yaml)) подключается так:
+
+```yaml
+auth:
+  enabled: true
+  secretRef: {name: my-registry-auth}
 ```
+
+При изменении Secret оператор перезапускает rgstr.
+
+## Ingress и TLS
+
+```yaml
+ingress:
+  enabled: true
+  host: registry.example.com
+  className: nginx
+  tls:
+    clusterIssuer: letsencrypt     # cert-manager; или secretName: my-tls
+```
+
+- **Зачем TLS:** kubelet и Docker без настройки `insecure-registries` скачивают образы только по HTTPS, поэтому TLS включён по умолчанию.
+- **Сертификат:** с `clusterIssuer` или `issuer` его выпускает cert-manager в Secret `<name>-tls`.
+- **Класс `nginx`:** оператор снимает лимит на размер запроса и увеличивает таймауты, чтобы проходили большие слои. Свои аннотации задаются в `ingress.annotations` и имеют приоритет.
+- **Что публикуется:** только `/v2`, `/ui`, `/stats`, `/healthz` и `/favicon.ico`. `/metrics` наружу не публикуется.
+- **Адрес:** `status.url` становится `https://<host>`, и на него же указывает realm токенов.
+
+Если перед ingress-контроллером есть ещё прокси, укажите его сети в `trustedProxies`. Тогда в журнале и для fail2ban в rgstr будут реальные IP клиентов.
+
+## Метрики
+
+```yaml
+metrics:
+  enabled: true                    # /metrics на Service (порт registry)
+  serviceMonitor:
+    enabled: true                  # нужен Prometheus Operator
+    labels: {release: prometheus}  # по каким меткам Prometheus выбирает ServiceMonitor
+```
+
+Список метрик приведён в [README rgstr](https://github.com/piqab/rgstr#метрики). Если CRD `ServiceMonitor` в кластере нет, условие `MetricsReady` об этом сообщит, а сам реестр продолжит работать.
+
+## Резервные копии
+
+Копируется весь том: образы, пользователи, метаданные и журнал. Копии не принадлежат `Registry` и не удаляются вместе с ним.
+
+### VolumeSnapshot (любой CSI-драйвер со snapshot-ами)
+
+```yaml
+backup:
+  enabled: true
+  schedule: "0 3 * * *"            # cron, UTC
+  keep: 7
+  method: VolumeSnapshot
+  volumeSnapshotClassName: csi-snapclass   # пусто: класс по умолчанию
+```
+
+Оператор сам создаёт `VolumeSnapshot` по расписанию и удаляет старые сверх `keep`. Если оператор был остановлен в момент запуска, пропущенная копия делается сразу после старта. Время последней и следующей копии видно в `status.lastBackupTime` и `status.nextBackupTime`.
+
+Нужны CRD и контроллер [external-snapshotter](https://github.com/kubernetes-csi/external-snapshotter).
+
+### Longhorn
+
+```yaml
+storage:
+  storageClassName: longhorn
+backup:
+  enabled: true
+  schedule: "0 3 * * *"
+  keep: 7
+  method: Longhorn
+  longhorn:
+    task: backup          # в backup target Longhorn (S3/NFS, вне узла); snapshot: локальный снимок
+    # namespace: longhorn-system
+```
+
+Оператор создаёт в Longhorn `RecurringJob` и подписывает на него PVC реестра. Расписание, создание копий и их ротацию берёт на себя Longhorn. Для `task: backup` в Longhorn должен быть настроен backup target.
+
+### Восстановление
+
+Создайте PVC из копии и укажите его в `storage.existingClaim`.
+
+Из VolumeSnapshot:
 
 ```yaml
 apiVersion: v1
-kind: Secret
-metadata:
-  name: my-registry-auth
-  namespace: default
-type: Opaque
-stringData:
-  RGSTR_AUTH_SECRET: "your-jwt-signing-secret"
-  RGSTR_USERS: "alice:$2a$10$HASH1,bob:$2a$10$HASH2"
+kind: PersistentVolumeClaim
+metadata: {name: my-registry-restored}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 20Gi}}
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: my-registry-20261027-030000
 ```
+
+Из Longhorn: в UI Longhorn выберите **Backup → Restore** и создайте PV/PVC для восстановленного тома.
+
+Затем:
 
 ```yaml
-# В Registry CR:
-auth:
-  enabled: true
-  secretRef:
-    name: my-registry-auth
+spec:
+  storage:
+    existingClaim: my-registry-restored
 ```
 
----
-
-## Доступ к реестру
+## Статус и диагностика
 
 ```bash
-# Получить ClusterIP
-kubectl get registry my-registry -o jsonpath='{.status.clusterIP}'
-
-# Через port-forward
-kubectl port-forward svc/my-registry 5000:5000
-
-docker tag alpine localhost:5000/myrepo/alpine:latest
-docker push localhost:5000/myrepo/alpine:latest
-docker pull localhost:5000/myrepo/alpine:latest
+kubectl get rgstr
+kubectl describe registry my-registry     # условия и события
 ```
 
-Для HTTP (без TLS) добавьте в `/etc/docker/daemon.json`:
-
-```json
-{
-  "insecure-registries": ["<clusterIP>:5000"]
-}
-```
-
----
-
-## Makefile — команды
-
-| Команда | Описание |
+| Условие | Смысл |
 |---|---|
-| `make deps` | `go mod tidy` |
-| `make run` | Запустить оператор локально (`go run`) |
-| `make dev` | `install-cluster` + `run` |
-| `make install-cluster` | Применить CRD + RBAC в кластер |
-| `make uninstall-cluster` | Удалить CRD + RBAC из кластера |
-| `make sample` | Применить пример Registry CR |
-| `make build` | Собрать бинарь в `bin/manager` |
-| `make test` | Запустить тесты |
-| `make docker-build` | Собрать Docker-образ оператора |
-| `make docker-push` | Запушить образ |
-| `make deploy` | Полный деплой в кластер (CRD + RBAC + Deployment) |
-| `make undeploy` | Удалить всё из кластера |
+| `Ready` | Под rgstr готов |
+| `StorageReady` | Том создан |
+| `AuthReady` | Секрет аутентификации на месте |
+| `IngressReady` | Ingress получил адрес |
+| `MetricsReady` | ServiceMonitor создан |
+| `BackupReady` | Расписание копий работает |
 
----
+`PHASE` принимает значения `Pending`, `Running`, `Stopped` (`replicas: 0`) или `Degraded` (одна из частей не удалась, причина есть в условиях и событиях).
 
-## Ресурсы, которыми управляет оператор
+## Удаление
 
-Для каждого объекта `Registry` оператор создаёт:
+```bash
+kubectl delete registry my-registry   # PVC, auth-секрет и копии остаются
+kubectl delete -f https://github.com/piqab/rgstroperator/releases/latest/download/operator.yaml
+# или: helm uninstall rgstroperator -n rgstroperator-system
+```
 
-| Ресурс | Имя | Namespace |
-|---|---|---|
-| `PersistentVolumeClaim` | `<name>-data` | тот же, что CR |
-| `Deployment` | `<name>` | тот же, что CR |
-| `Service` | `<name>` | тот же, что CR |
+Удаление CRD (`make uninstall`) удаляет все ресурсы `Registry` в кластере.
 
-Все ресурсы имеют `ownerReference` на `Registry` — при удалении CR все ресурсы удаляются автоматически.
+## Разработка
+
+**Требования:** Go 1.23+, make, Docker. Для e2e нужны также kubectl и curl.
+
+Инструменты (`controller-gen`, `setup-envtest`, `kind`, `helm`) ставятся в `./bin` автоматически.
+
+| Команда | Что делает |
+|---|---|
+| `make generate manifests` | Перегенерировать deepcopy, CRD и RBAC из маркеров kubebuilder |
+| `make bundle` | Собрать `deploy/operator.yaml` и обновить CRD, RBAC и версию в чарте |
+| `make test` | Unit- и envtest-тесты (настоящий kube-apiserver, без кластера) |
+| `make e2e` | Полный тест в kind: установка, вход, push, метрики, сохранность данных |
+| `make chart` | `helm lint` и пакет чарта в `dist/` |
+| `make run` | Запустить оператор локально против текущего kubeconfig |
+| `make install`, `make sample` | Установить CRD и применить пример |
+| `make docker-build` | Собрать образ оператора |
+
+Варианты запуска e2e:
+
+```bash
+RGSTR_SRC=../rgstr make e2e     # rgstr собирается из исходников
+INSTALL=helm make e2e           # оператор ставится чартом
+KEEP=1 make e2e                 # оставить кластер kind после теста
+```
+
+CRD, RBAC, `deploy/operator.yaml` и чарт генерируются из кода, CI проверяет, что они закоммичены актуальными.
+
+### Релиз
+
+Версия хранится в файле `VERSION`. После `make bundle` и коммита:
+
+```bash
+git tag v$(cat VERSION) && git push origin v$(cat VERSION)
+```
+
+GitHub Actions после этого:
+
+- собирает образ `ghcr.io/piqab/rgstroperator:<версия>` для amd64 и arm64;
+- создаёт Release с `operator.yaml` и пакетом чарта;
+- публикует чарт в `oci://ghcr.io/piqab/charts`.
+
+## Лицензия
+
+[MIT](LICENSE)
