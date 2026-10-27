@@ -3,8 +3,8 @@ name: rgstroperator
 description: Operator for rgstr, a lightweight OCI container registry with a web admin, LDAP/OIDC, pull-through cache, Trivy scanning, backups and HA on PostgreSQL and S3
 type: application
 # version and appVersion are set from VERSION by `make bundle`.
-version: 0.5.1
-appVersion: "0.5.1"
+version: 0.5.2
+appVersion: "0.5.2"
 home: https://github.com/piqab/rgstroperator
 icon: https://raw.githubusercontent.com/piqab/rgstroperator/main/docs/icon.png
 sources:
@@ -29,20 +29,14 @@ annotations:
     - name: Документация (русский)
       url: https://github.com/piqab/rgstroperator/blob/main/README.ru.md
   artifacthub.io/changes: |
-    - kind: added
-      description: Pull-through cache projects (spec.proxies) for Docker Hub, GHCR and other registries
-    - kind: added
-      description: Vulnerability scanning with Trivy (spec.scan); projects can refuse pulls of vulnerable images
-    - kind: added
-      description: Cluster mode with several replicas on PostgreSQL and S3 (spec.database, spec.storage.s3)
     - kind: changed
-      description: Default rgstr image 1.10.1
+      description: Default rgstr image 1.11.0 (roles on repositories of a project by pattern)
   artifacthub.io/images: |
     - name: rgstroperator
-      image: ghcr.io/piqab/rgstroperator:0.5.1
+      image: ghcr.io/piqab/rgstroperator:0.5.2
       platforms: [linux/amd64, linux/arm64]
     - name: rgstr
-      image: ghcr.io/piqab/rgstr:1.10.1
+      image: ghcr.io/piqab/rgstr:1.11.0
       platforms: [linux/amd64, linux/arm64]
   artifacthub.io/crds: |
     - kind: Registry
