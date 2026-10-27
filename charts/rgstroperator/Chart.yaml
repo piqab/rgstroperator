@@ -1,0 +1,13 @@
+apiVersion: v2
+name: rgstroperator
+description: Kubernetes operator for rgstr, a minimal OCI/Docker container registry
+type: application
+# version and appVersion are set from VERSION by `make bundle`.
+version: 0.2.0
+appVersion: "0.2.0"
+home: https://github.com/piqab/rgstroperator
+sources:
+  - https://github.com/piqab/rgstroperator
+  - https://github.com/piqab/rgstr
+keywords: [registry, oci, docker, operator]
+license: MIT

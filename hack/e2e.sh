@@ -7,6 +7,7 @@
 #
 #   hack/e2e.sh                       # rgstr image pulled from GHCR
 #   RGSTR_SRC=../rgstr hack/e2e.sh    # rgstr image built from source
+#   INSTALL=helm hack/e2e.sh          # install the operator with the Helm chart
 #   KEEP=1 hack/e2e.sh                # keep the cluster afterwards
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -41,8 +42,13 @@ else
 fi
 "$BIN/kind" load docker-image --name "$CLUSTER" "$OPERATOR_IMAGE" "$RGSTR_IMAGE"
 
-step "install the operator"
-k apply -f deploy/operator.yaml >/dev/null
+step "install the operator (${INSTALL:-kubectl})"
+if [ "${INSTALL:-}" = helm ]; then
+  "$BIN/helm" upgrade --install rgstroperator charts/rgstroperator --kube-context "kind-$CLUSTER" \
+    -n rgstroperator-system --create-namespace --wait --timeout 120s >/dev/null
+else
+  k apply -f deploy/operator.yaml >/dev/null
+fi
 k -n rgstroperator-system rollout status deploy/rgstroperator --timeout=120s
 
 step "create a Registry with auth and metrics"

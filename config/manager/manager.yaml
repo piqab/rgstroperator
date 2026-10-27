@@ -20,6 +20,7 @@ spec:
       terminationGracePeriodSeconds: 10
       securityContext:
         runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: manager
           image: ghcr.io/piqab/rgstroperator:VERSION
@@ -36,6 +37,10 @@ spec:
             - name: health
               containerPort: 8081
               protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -55,7 +60,3 @@ spec:
             requests:
               cpu: 50m
               memory: 64Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: [ALL]

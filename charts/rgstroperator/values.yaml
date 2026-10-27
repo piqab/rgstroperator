@@ -1,0 +1,26 @@
+image:
+  repository: ghcr.io/piqab/rgstroperator
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Leader election, needed with more than one operator replica.
+leaderElection: true
+replicas: 1
+
+resources:
+  requests: {cpu: 10m, memory: 64Mi}
+  limits: {cpu: 500m, memory: 256Mi}
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+
+serviceAccount:
+  # Name of the operator's ServiceAccount. Defaults to the release name.
+  name: ""
