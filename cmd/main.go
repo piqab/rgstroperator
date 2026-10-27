@@ -18,6 +18,9 @@ import (
 	"github.com/piqab/rgstroperator/internal/controller"
 )
 
+// version is set at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
@@ -79,7 +82,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting manager")
+	setupLog.Info("starting manager", "version", version)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)

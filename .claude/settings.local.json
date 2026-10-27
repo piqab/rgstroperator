@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(where go:*)",
-      "Read(//usr/local/go/bin/**)"
-    ]
-  }
-}

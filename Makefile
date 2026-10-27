@@ -1,73 +1,77 @@
-IMAGE ?= ghcr.io/piqab/rgstroperator
-TAG   ?= latest
+IMAGE   ?= ghcr.io/piqab/rgstroperator
+VERSION ?= $(shell cat VERSION)
+TAG     ?= $(VERSION)
 
-.PHONY: deps run install-cluster uninstall-cluster sample \
-        build test docker-build docker-push deploy undeploy
+BIN := $(CURDIR)/bin
+CONTROLLER_GEN := $(BIN)/controller-gen
+SETUP_ENVTEST  := $(BIN)/setup-envtest
+ENVTEST_K8S    ?= 1.31.x
 
-# ── Local development (no compilation step) ────────────────────────────────
+.PHONY: all generate manifests bundle build test run install uninstall \
+        sample deploy undeploy docker-build docker-push tools
 
-## Fetch Go dependencies
-deps:
-	go mod tidy
+all: generate manifests bundle build
 
-## Install CRD into the cluster, then run the operator locally via go run.
-## Requires: kubectl configured + Go installed.
-## Usage: make dev [KUBECONFIG=~/.kube/config]
-dev: install-cluster
-	go run ./cmd/main.go --leader-elect=false
+## Regenerate deepcopy code from the API types
+generate: $(CONTROLLER_GEN)
+	$(CONTROLLER_GEN) object paths="./..."
 
-## Just run the operator (CRD assumed already installed)
-run:
-	go run ./cmd/main.go --leader-elect=false
+## Regenerate the CRD and RBAC from kubebuilder markers
+manifests: $(CONTROLLER_GEN)
+	$(CONTROLLER_GEN) rbac:roleName=rgstroperator-manager-role crd paths="./..." \
+		output:crd:artifacts:config=config/crd/bases output:rbac:artifacts:config=config/rbac
 
-## Install only CRD + RBAC into the cluster (no operator Deployment)
-install-cluster:
-	kubectl apply -f config/crd/registry.rgstr.io_registries.yaml
-	kubectl apply -f config/manager/serviceaccount.yaml
-	kubectl apply -f config/rbac/role.yaml
-	kubectl apply -f config/rbac/role_binding.yaml
-
-## Remove CRD + RBAC from the cluster
-uninstall-cluster:
-	kubectl delete -f config/rbac/role_binding.yaml      --ignore-not-found
-	kubectl delete -f config/rbac/role.yaml              --ignore-not-found
-	kubectl delete -f config/manager/serviceaccount.yaml --ignore-not-found
-	kubectl delete -f config/crd/registry.rgstr.io_registries.yaml --ignore-not-found
-
-## Apply the sample Registry CR
-sample:
-	kubectl apply -f config/samples/registry_v1alpha1_registry.yaml
-
-# ── In-cluster deployment (needs Docker image) ─────────────────────────────
+## Assemble deploy/operator.yaml (CRD + RBAC + manager) for VERSION
+bundle: manifests
+	./hack/bundle.sh
 
 ## Build the operator binary
 build:
 	go build -o bin/manager ./cmd/main.go
 
-## Run tests
-test:
-	go test ./... -v
+## Run unit and envtest tests (downloads a kube-apiserver and etcd once)
+test: $(SETUP_ENVTEST)
+	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S) --bin-dir $(CURDIR)/testbin -p path)" \
+		go test ./... -coverprofile cover.out
 
-## Build the Docker image
+## Run the operator locally against the current kubeconfig
+run: install
+	go run ./cmd/main.go --leader-elect=false
+
+## Install the CRD (and the operator's namespace) into the cluster
+install: manifests
+	kubectl apply -f config/crd/bases/
+	kubectl apply -f config/manager/namespace.yaml
+
+## Remove the CRD from the cluster (deletes every Registry resource!)
+uninstall:
+	kubectl delete -f config/crd/bases/ --ignore-not-found
+
+## Apply the sample Registry
+sample:
+	kubectl apply -f config/samples/registry_v1alpha1_registry.yaml
+
+## Deploy the operator in-cluster from deploy/operator.yaml
+deploy: bundle
+	kubectl apply -f deploy/operator.yaml
+
+## Remove the operator (Registry resources and their PVCs are kept)
+undeploy:
+	kubectl delete -f config/manager/manager.yaml --ignore-not-found
+
+## Build the operator image
 docker-build:
-	docker build -t $(IMAGE):$(TAG) .
+	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(TAG) .
 
-## Push the Docker image
+## Push the operator image
 docker-push:
 	docker push $(IMAGE):$(TAG)
 
-## Deploy the operator in-cluster (CRD + RBAC + manager Deployment)
-deploy:
-	kubectl apply -f config/crd/registry.rgstr.io_registries.yaml
-	kubectl apply -f config/manager/serviceaccount.yaml
-	kubectl apply -f config/rbac/role.yaml
-	kubectl apply -f config/rbac/role_binding.yaml
-	kubectl apply -f config/manager/manager.yaml
+## Install the development tools into ./bin
+tools: $(CONTROLLER_GEN) $(SETUP_ENVTEST)
 
-## Undeploy the operator from the cluster
-undeploy:
-	kubectl delete -f config/manager/manager.yaml        --ignore-not-found
-	kubectl delete -f config/rbac/role_binding.yaml      --ignore-not-found
-	kubectl delete -f config/rbac/role.yaml              --ignore-not-found
-	kubectl delete -f config/manager/serviceaccount.yaml --ignore-not-found
-	kubectl delete -f config/crd/registry.rgstr.io_registries.yaml --ignore-not-found
+$(CONTROLLER_GEN):
+	GOBIN=$(BIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5
+
+$(SETUP_ENVTEST):
+	GOBIN=$(BIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.19

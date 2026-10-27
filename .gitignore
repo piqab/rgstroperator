@@ -1,0 +1,9 @@
+# Tools installed by make (controller-gen, setup-envtest, kind)
+/bin/
+# envtest assets
+/testbin/
+# Local tool settings
+.claude/
+# Build output
+/dist/
+cover.out

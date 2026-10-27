@@ -1,3 +1,6 @@
+// Package v1alpha1 contains the Registry API of rgstroperator.
+// +kubebuilder:object:generate=true
+// +groupName=registry.rgstr.io
 package v1alpha1
 
 import (

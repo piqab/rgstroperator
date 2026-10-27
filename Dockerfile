@@ -1,4 +1,4 @@
-FROM golang:1.23-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS builder
 WORKDIR /workspace
 
 COPY go.mod go.sum ./
@@ -8,7 +8,11 @@ COPY api/    api/
 COPY cmd/    cmd/
 COPY internal/ internal/
 
-RUN CGO_ENABLED=0 GOOS=linux go build -a -o manager ./cmd/main.go
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o manager ./cmd/main.go
 
 # -----------------------------------------------------------------------
 FROM gcr.io/distroless/static:nonroot
