@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,7 +31,22 @@ import (
 var (
 	k8s    client.Client
 	scheme = runtime.NewScheme()
+
+	// healthByNS sets what /healthz of a Registry in a namespace reports.
+	healthByNS sync.Map // namespace → Health
 )
+
+func probeHealth(_ context.Context, url string) (Health, error) {
+	h := Health{Version: "v1.7.0-test"}
+	healthByNS.Range(func(ns, v any) bool {
+		if strings.Contains(url, "."+ns.(string)+".svc") {
+			h = v.(Health)
+			return false
+		}
+		return true
+	})
+	return h, nil
+}
 
 func TestMain(m *testing.M) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
@@ -59,7 +76,7 @@ func TestMain(m *testing.M) {
 	}
 	if err := (&RegistryReconciler{
 		Client: mgr.GetClient(), Scheme: mgr.GetScheme(), Recorder: mgr.GetEventRecorderFor("test"),
-		ProbeVersion: func(context.Context, string) (string, error) { return "v1.7.0-test", nil },
+		ProbeHealth: probeHealth,
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}

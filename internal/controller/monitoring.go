@@ -78,42 +78,70 @@ func (r *RegistryReconciler) reconcileServiceMonitor(ctx context.Context, reg *r
 	return err
 }
 
-// VersionProber asks a running rgstr for its version.
-type VersionProber func(ctx context.Context, url string) (string, error)
+// HealthProber reads rgstr's /healthz (replaced in tests).
+type HealthProber func(ctx context.Context, url string) (Health, error)
 
-// httpVersion reads {"version": …} from /healthz. It works when the
-// operator runs in the cluster (Service DNS); elsewhere it fails and the
-// last known version stays in the status.
-func httpVersion(ctx context.Context, url string) (string, error) {
+// Health is what rgstr reports at /healthz.
+type Health struct {
+	Version    string `json:"version"`
+	LastBackup string `json:"last_backup"` // RFC 3339, set when rgstr backs up itself
+}
+
+func httpHealth(ctx context.Context, url string) (Health, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", err
+		return Health{}, err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", err
+		return Health{}, err
 	}
 	defer resp.Body.Close()
-	var body struct{ Version string }
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", err
-	}
-	return body.Version, nil
+	var h Health
+	err = json.NewDecoder(resp.Body).Decode(&h)
+	return h, err
 }
 
-func (r *RegistryReconciler) observeVersion(ctx context.Context, reg *registryv1alpha1.Registry, s registryv1alpha1.RegistrySpec) {
+func (r *RegistryReconciler) observeHealth(ctx context.Context, reg *registryv1alpha1.Registry, s registryv1alpha1.RegistrySpec) {
 	if !reg.Status.Ready {
 		return
 	}
-	probe := r.ProbeVersion
+	probe := r.ProbeHealth
 	if probe == nil {
-		probe = httpVersion
+		probe = httpHealth
 	}
 	url := fmt.Sprintf("http://%s.%s.svc:%d/healthz", reg.Name, reg.Namespace, s.Port)
-	if v, err := probe(ctx, url); err == nil && v != "" {
-		reg.Status.Version = v
+	h, err := probe(ctx, url)
+	if err != nil {
+		return
+	}
+	if h.Version != "" {
+		reg.Status.Version = h.Version
+	}
+	if backupMethod(s) != methodS3 {
+		return
+	}
+	b, err := backupSettings(s)
+	if err != nil {
+		return
+	}
+	// Overdue: the backup after the last one (or after the Registry was
+	// created) should have finished an hour ago.
+	since := reg.CreationTimestamp.Time
+	if t, err := time.Parse(time.RFC3339, h.LastBackup); err == nil {
+		lt := metav1.NewTime(t)
+		reg.Status.LastBackupTime = &lt
+		since = t
+	}
+	if due := b.schedule.Next(since).Add(time.Hour); now().After(due) {
+		msg := "no backup yet"
+		if reg.Status.LastBackupTime != nil {
+			msg = "last backup " + reg.Status.LastBackupTime.UTC().Format(time.RFC3339)
+		}
+		setCondition(reg, CondBackup, metav1.ConditionFalse, "Overdue",
+			msg+"; see the Backups page of the web admin or the rgstr log")
 	}
 }
 

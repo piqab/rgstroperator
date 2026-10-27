@@ -82,6 +82,31 @@ func (r *RegistryReconciler) reconcileAuthSecret(ctx context.Context, reg *regis
 	return name, dataChecksum(sec.Data), err
 }
 
+// referencedChecksum checksums the Secrets the environment reads through
+// secretKeyRef (LDAP bind password, OIDC client secret, S3 keys), so
+// changing one restarts rgstr. A missing Secret is an error: rgstr would
+// not start.
+func (r *RegistryReconciler) referencedChecksum(ctx context.Context, reg *registryv1alpha1.Registry, s registryv1alpha1.RegistrySpec) (string, error) {
+	names := referencedSecrets(s)
+	if len(names) == 0 {
+		return "", nil
+	}
+	all := map[string][]byte{}
+	for _, name := range names {
+		sec := &corev1.Secret{}
+		if err := r.Get(ctx, client.ObjectKey{Name: name, Namespace: reg.Namespace}, sec); err != nil {
+			if apierrors.IsNotFound(err) {
+				return "", fmt.Errorf("secret %q not found", name)
+			}
+			return "", err
+		}
+		for k, v := range sec.Data {
+			all[name+"/"+k] = v
+		}
+	}
+	return dataChecksum(all), nil
+}
+
 func dataChecksum(data map[string][]byte) string {
 	keys := make([]string, 0, len(data))
 	for k := range data {

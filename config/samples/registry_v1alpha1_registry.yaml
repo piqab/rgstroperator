@@ -4,7 +4,7 @@ metadata:
   name: my-registry
   namespace: default
 spec:
-  # image: ghcr.io/piqab/rgstr:1.7.0   # default: the release this operator is tested with
+  # image: ghcr.io/piqab/rgstr:1.8.0   # default: the release this operator is tested with
   storage:
     size: 20Gi
     # storageClassName: longhorn
@@ -19,6 +19,21 @@ spec:
     #   name: my-registry-auth
     admins: [admin]
     sessionTTL: 12h
+    # Sign-in with LDAP / Active Directory passwords:
+    # ldap:
+    #   url: ldaps://dc1.corp.example:636
+    #   bindDN: CN=svc-rgstr,OU=Service,DC=corp,DC=example
+    #   bindPasswordSecretRef: {name: rgstr-ldap, key: password}
+    #   baseDN: DC=corp,DC=example
+    #   userFilter: (&(objectClass=user)(sAMAccountName=%s))
+    #   adminGroups: [Registry-Admins]
+    # "Sign in with ..." through OpenID Connect (Keycloak, Authentik, Entra ID):
+    # oidc:
+    #   issuer: https://sso.example.com/realms/main
+    #   clientID: rgstr
+    #   clientSecretRef: {name: rgstr-oidc, key: client-secret}
+    #   displayName: Keycloak
+    #   adminGroups: [registry-admins]
 
   # Publish outside the cluster (docker push/pull, kubelet pulls, web admin).
   # Container runtimes need HTTPS: use cert-manager or your own TLS Secret.
@@ -41,7 +56,13 @@ spec:
   #   enabled: true
   #   schedule: "0 3 * * *"       # cron, UTC
   #   keep: 7
-  #   method: Longhorn             # RecurringJob; or VolumeSnapshot (any CSI driver)
+  #   method: S3                   # rgstr uploads archives itself; or Longhorn, VolumeSnapshot
+  #   s3:
+  #     bucket: backups
+  #     prefix: rgstr/prod
+  #     endpoint: https://storage.yandexcloud.net   # empty: AWS S3
+  #     secretRef: {name: rgstr-s3}                 # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+  #   # method: Longhorn           # RecurringJob; or VolumeSnapshot (any CSI driver)
   #   longhorn:
   #     task: backup               # to the Longhorn backup target; or snapshot
   #   # volumeSnapshotClassName: longhorn-snapshot   # VolumeSnapshot method

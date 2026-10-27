@@ -29,6 +29,7 @@ var (
 const (
 	methodSnapshot = "VolumeSnapshot"
 	methodLonghorn = "Longhorn"
+	methodS3       = "S3"
 
 	// backupLabel marks VolumeSnapshots made by the operator; its value is
 	// the Registry name.
@@ -99,9 +100,31 @@ func (r *RegistryReconciler) reconcileBackup(ctx context.Context, reg *registryv
 		return r.reconcileSnapshots(ctx, reg, s, claim)
 	case methodLonghorn:
 		return 0, r.reconcileLonghornJob(ctx, reg, s, claim)
+	case methodS3:
+		return r.reconcileS3Backup(reg, s)
 	}
 	reg.Status.LastBackup, reg.Status.LastBackupTime = "", nil
 	return 0, nil
+}
+
+// ── S3 (made by rgstr) ───────────────────────────────────────────────────────
+
+// reconcileS3Backup reports rgstr's own backups: rgstr runs the schedule;
+// the last success comes from its /healthz (observeBackup). The returned
+// delay re-reads it just after the next backup is due.
+func (r *RegistryReconciler) reconcileS3Backup(reg *registryv1alpha1.Registry, s registryv1alpha1.RegistrySpec) (time.Duration, error) {
+	b, err := backupSettings(s)
+	if err != nil {
+		return 0, err
+	}
+	if s.Backup.S3 == nil || s.Backup.S3.Bucket == "" || s.Backup.S3.SecretRef.Name == "" {
+		return 0, fmt.Errorf("backup method S3 needs s3.bucket and s3.secretRef")
+	}
+	next := metav1.NewTime(b.schedule.Next(now()))
+	reg.Status.NextBackupTime = &next
+	target := "s3://" + s.Backup.S3.Bucket + "/" + strings.Trim(s.Backup.S3.Prefix, "/")
+	reg.Status.LastBackup = strings.TrimSuffix(target, "/")
+	return time.Until(next.Time) + 2*time.Minute, nil
 }
 
 // ── VolumeSnapshot ───────────────────────────────────────────────────────────

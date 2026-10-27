@@ -101,6 +101,7 @@ type RegistrySpec struct {
 
 // BackupSpec schedules backups of the data volume. Backups are not owned
 // by the Registry: deleting it keeps them.
+// +kubebuilder:validation:XValidation:rule="!has(self.enabled) || !self.enabled || !has(self.method) || self.method != 'S3' || (has(self.s3) && has(self.s3.bucket) && has(self.s3.secretRef))",message="the S3 method needs s3.bucket and s3.secretRef"
 type BackupSpec struct {
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
@@ -115,10 +116,12 @@ type BackupSpec struct {
 	// +kubebuilder:validation:Maximum=100
 	Keep int32 `json:"keep,omitempty"`
 
-	// Method: VolumeSnapshot (CSI snapshots, made by the operator) or
-	// Longhorn (a Longhorn RecurringJob). Defaults to VolumeSnapshot.
+	// Method: VolumeSnapshot (CSI snapshots, made by the operator),
+	// Longhorn (a Longhorn RecurringJob) or S3 (rgstr uploads archives to
+	// an S3-compatible store itself; no CSI driver needed). Defaults to
+	// VolumeSnapshot.
 	// +optional
-	// +kubebuilder:validation:Enum=VolumeSnapshot;Longhorn
+	// +kubebuilder:validation:Enum=VolumeSnapshot;Longhorn;S3
 	Method string `json:"method,omitempty"`
 
 	// VolumeSnapshotClassName for the VolumeSnapshot method. Empty: the
@@ -129,6 +132,34 @@ type BackupSpec struct {
 	// Longhorn settings for the Longhorn method.
 	// +optional
 	Longhorn LonghornBackupSpec `json:"longhorn,omitempty"`
+
+	// S3 settings for the S3 method.
+	// +optional
+	S3 *S3BackupSpec `json:"s3,omitempty"`
+}
+
+// S3BackupSpec says where rgstr uploads its backups.
+type S3BackupSpec struct {
+	// Bucket, created beforehand.
+	// +kubebuilder:validation:MinLength=1
+	Bucket string `json:"bucket"`
+	// Prefix of the backup objects, e.g. "rgstr/prod".
+	// +optional
+	Prefix string `json:"prefix,omitempty"`
+	// Endpoint of an S3-compatible store, e.g. "https://storage.yandexcloud.net"
+	// or "http://minio.minio:9000". Empty: AWS S3 for Region.
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+	// Region. Defaults to "us-east-1".
+	// +optional
+	Region string `json:"region,omitempty"`
+	// PathStyle addresses https://endpoint/bucket/key. Defaults to true
+	// with an Endpoint (MinIO, Ceph), false for AWS.
+	// +optional
+	PathStyle *bool `json:"pathStyle,omitempty"`
+	// SecretRef names a Secret with AWS_ACCESS_KEY_ID and
+	// AWS_SECRET_ACCESS_KEY (and optionally AWS_SESSION_TOKEN).
+	SecretRef corev1.LocalObjectReference `json:"secretRef"`
 }
 
 // LonghornBackupSpec configures the Longhorn RecurringJob.
@@ -280,6 +311,105 @@ type AuthSpec struct {
 	// ReadOnlyUsers may only pull (RGSTR_READONLY_USERS).
 	// +optional
 	ReadOnlyUsers []string `json:"readOnlyUsers,omitempty"`
+
+	// LDAP lets users sign in with LDAP / Active Directory passwords.
+	// +optional
+	LDAP *LDAPSpec `json:"ldap,omitempty"`
+
+	// OIDC adds "Sign in with ..." (OpenID Connect) to the web admin.
+	// +optional
+	OIDC *OIDCSpec `json:"oidc,omitempty"`
+}
+
+// GroupRolesSpec maps directory groups to rgstr roles. Without admin and
+// read-only groups, roles of directory users are set in the web admin.
+type GroupRolesSpec struct {
+	// AdminGroups grant the admin role.
+	// +optional
+	AdminGroups []string `json:"adminGroups,omitempty"`
+	// ReadOnlyGroups grant the read-only role.
+	// +optional
+	ReadOnlyGroups []string `json:"readOnlyGroups,omitempty"`
+	// AllowedGroups, when set, limit sign-in to their members (and to
+	// members of the role groups).
+	// +optional
+	AllowedGroups []string `json:"allowedGroups,omitempty"`
+	// DefaultRole of members of no role group. Defaults to "user".
+	// +kubebuilder:validation:Enum=admin;user;readonly
+	// +optional
+	DefaultRole string `json:"defaultRole,omitempty"`
+}
+
+// LDAPSpec configures LDAP / Active Directory sign-in (RGSTR_LDAP_*).
+type LDAPSpec struct {
+	// URL, e.g. "ldaps://dc1.corp.example:636".
+	// +kubebuilder:validation:Pattern=`^ldaps?://`
+	URL string `json:"url"`
+	// StartTLS upgrades an ldap:// connection.
+	// +optional
+	StartTLS bool `json:"startTLS,omitempty"`
+	// InsecureSkipVerify does not check the server certificate (tests only).
+	// +optional
+	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
+	// BindDN of the service account that searches users. Empty: anonymous.
+	// +optional
+	BindDN string `json:"bindDN,omitempty"`
+	// BindPasswordSecretRef selects the service account's password.
+	// +optional
+	BindPasswordSecretRef *corev1.SecretKeySelector `json:"bindPasswordSecretRef,omitempty"`
+	// BaseDN to search users in.
+	// +kubebuilder:validation:MinLength=1
+	BaseDN string `json:"baseDN"`
+	// UserFilter; %s is the user name. Defaults to
+	// "(&(objectClass=person)(uid=%s))"; for Active Directory use
+	// "(&(objectClass=user)(sAMAccountName=%s))".
+	// +optional
+	UserFilter string `json:"userFilter,omitempty"`
+	// GroupAttr of the user entry listing its groups. Defaults to "memberOf".
+	// +optional
+	GroupAttr string `json:"groupAttr,omitempty"`
+	// GroupFilter searches groups for directories without memberOf; %s is
+	// the user's DN, e.g. "(&(objectClass=groupOfNames)(member=%s))".
+	// +optional
+	GroupFilter string `json:"groupFilter,omitempty"`
+	// GroupBaseDN to search groups in. Defaults to BaseDN.
+	// +optional
+	GroupBaseDN string `json:"groupBaseDN,omitempty"`
+
+	GroupRolesSpec `json:",inline"`
+}
+
+// OIDCSpec configures OpenID Connect sign-in for the web admin
+// (RGSTR_OIDC_*). Users make a CLI secret in the admin for docker login.
+type OIDCSpec struct {
+	// Issuer URL, e.g. "https://sso.example.com/realms/main".
+	// +kubebuilder:validation:Pattern=`^https?://`
+	Issuer string `json:"issuer"`
+	// ClientID registered at the provider.
+	// +kubebuilder:validation:MinLength=1
+	ClientID string `json:"clientID"`
+	// ClientSecretRef selects the client secret. Unset: a public client
+	// (PKCE only).
+	// +optional
+	ClientSecretRef *corev1.SecretKeySelector `json:"clientSecretRef,omitempty"`
+	// RedirectURL registered at the provider. Defaults to
+	// "<external URL>/ui/oidc/callback".
+	// +optional
+	RedirectURL string `json:"redirectURL,omitempty"`
+	// Scopes to request. Defaults to [openid, profile, email].
+	// +optional
+	Scopes []string `json:"scopes,omitempty"`
+	// UsernameClaim. Defaults to "preferred_username".
+	// +optional
+	UsernameClaim string `json:"usernameClaim,omitempty"`
+	// GroupsClaim. Defaults to "groups".
+	// +optional
+	GroupsClaim string `json:"groupsClaim,omitempty"`
+	// DisplayName on the sign-in button. Defaults to "SSO".
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
+
+	GroupRolesSpec `json:",inline"`
 }
 
 // PodSpec customises the rgstr pod.

@@ -77,6 +77,190 @@ spec:
                   enabled:
                     description: Enabled turns authentication on (RGSTR_AUTH_ENABLED).
                     type: boolean
+                  ldap:
+                    description: LDAP lets users sign in with LDAP / Active Directory
+                      passwords.
+                    properties:
+                      adminGroups:
+                        description: AdminGroups grant the admin role.
+                        items:
+                          type: string
+                        type: array
+                      allowedGroups:
+                        description: |-
+                          AllowedGroups, when set, limit sign-in to their members (and to
+                          members of the role groups).
+                        items:
+                          type: string
+                        type: array
+                      baseDN:
+                        description: BaseDN to search users in.
+                        minLength: 1
+                        type: string
+                      bindDN:
+                        description: 'BindDN of the service account that searches
+                          users. Empty: anonymous.'
+                        type: string
+                      bindPasswordSecretRef:
+                        description: BindPasswordSecretRef selects the service account's
+                          password.
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      defaultRole:
+                        description: DefaultRole of members of no role group. Defaults
+                          to "user".
+                        enum:
+                        - admin
+                        - user
+                        - readonly
+                        type: string
+                      groupAttr:
+                        description: GroupAttr of the user entry listing its groups.
+                          Defaults to "memberOf".
+                        type: string
+                      groupBaseDN:
+                        description: GroupBaseDN to search groups in. Defaults to
+                          BaseDN.
+                        type: string
+                      groupFilter:
+                        description: |-
+                          GroupFilter searches groups for directories without memberOf; %s is
+                          the user's DN, e.g. "(&(objectClass=groupOfNames)(member=%s))".
+                        type: string
+                      insecureSkipVerify:
+                        description: InsecureSkipVerify does not check the server
+                          certificate (tests only).
+                        type: boolean
+                      readOnlyGroups:
+                        description: ReadOnlyGroups grant the read-only role.
+                        items:
+                          type: string
+                        type: array
+                      startTLS:
+                        description: StartTLS upgrades an ldap:// connection.
+                        type: boolean
+                      url:
+                        description: URL, e.g. "ldaps://dc1.corp.example:636".
+                        pattern: ^ldaps?://
+                        type: string
+                      userFilter:
+                        description: |-
+                          UserFilter; %s is the user name. Defaults to
+                          "(&(objectClass=person)(uid=%s))"; for Active Directory use
+                          "(&(objectClass=user)(sAMAccountName=%s))".
+                        type: string
+                    required:
+                    - baseDN
+                    - url
+                    type: object
+                  oidc:
+                    description: OIDC adds "Sign in with ..." (OpenID Connect) to
+                      the web admin.
+                    properties:
+                      adminGroups:
+                        description: AdminGroups grant the admin role.
+                        items:
+                          type: string
+                        type: array
+                      allowedGroups:
+                        description: |-
+                          AllowedGroups, when set, limit sign-in to their members (and to
+                          members of the role groups).
+                        items:
+                          type: string
+                        type: array
+                      clientID:
+                        description: ClientID registered at the provider.
+                        minLength: 1
+                        type: string
+                      clientSecretRef:
+                        description: |-
+                          ClientSecretRef selects the client secret. Unset: a public client
+                          (PKCE only).
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      defaultRole:
+                        description: DefaultRole of members of no role group. Defaults
+                          to "user".
+                        enum:
+                        - admin
+                        - user
+                        - readonly
+                        type: string
+                      displayName:
+                        description: DisplayName on the sign-in button. Defaults to
+                          "SSO".
+                        type: string
+                      groupsClaim:
+                        description: GroupsClaim. Defaults to "groups".
+                        type: string
+                      issuer:
+                        description: Issuer URL, e.g. "https://sso.example.com/realms/main".
+                        pattern: ^https?://
+                        type: string
+                      readOnlyGroups:
+                        description: ReadOnlyGroups grant the read-only role.
+                        items:
+                          type: string
+                        type: array
+                      redirectURL:
+                        description: |-
+                          RedirectURL registered at the provider. Defaults to
+                          "<external URL>/ui/oidc/callback".
+                        type: string
+                      scopes:
+                        description: Scopes to request. Defaults to [openid, profile,
+                          email].
+                        items:
+                          type: string
+                        type: array
+                      usernameClaim:
+                        description: UsernameClaim. Defaults to "preferred_username".
+                        type: string
+                    required:
+                    - clientID
+                    - issuer
+                    type: object
                   readOnlyUsers:
                     description: ReadOnlyUsers may only pull (RGSTR_READONLY_USERS).
                     items:
@@ -144,12 +328,58 @@ spec:
                     type: object
                   method:
                     description: |-
-                      Method: VolumeSnapshot (CSI snapshots, made by the operator) or
-                      Longhorn (a Longhorn RecurringJob). Defaults to VolumeSnapshot.
+                      Method: VolumeSnapshot (CSI snapshots, made by the operator),
+                      Longhorn (a Longhorn RecurringJob) or S3 (rgstr uploads archives to
+                      an S3-compatible store itself; no CSI driver needed). Defaults to
+                      VolumeSnapshot.
                     enum:
                     - VolumeSnapshot
                     - Longhorn
+                    - S3
                     type: string
+                  s3:
+                    description: S3 settings for the S3 method.
+                    properties:
+                      bucket:
+                        description: Bucket, created beforehand.
+                        minLength: 1
+                        type: string
+                      endpoint:
+                        description: |-
+                          Endpoint of an S3-compatible store, e.g. "https://storage.yandexcloud.net"
+                          or "http://minio.minio:9000". Empty: AWS S3 for Region.
+                        type: string
+                      pathStyle:
+                        description: |-
+                          PathStyle addresses https://endpoint/bucket/key. Defaults to true
+                          with an Endpoint (MinIO, Ceph), false for AWS.
+                        type: boolean
+                      prefix:
+                        description: Prefix of the backup objects, e.g. "rgstr/prod".
+                        type: string
+                      region:
+                        description: Region. Defaults to "us-east-1".
+                        type: string
+                      secretRef:
+                        description: |-
+                          SecretRef names a Secret with AWS_ACCESS_KEY_ID and
+                          AWS_SECRET_ACCESS_KEY (and optionally AWS_SESSION_TOKEN).
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - bucket
+                    - secretRef
+                    type: object
                   schedule:
                     description: Schedule in cron format (UTC). Defaults to "0 3 *
                       * *".
@@ -160,6 +390,11 @@ spec:
                       default class.
                     type: string
                 type: object
+                x-kubernetes-validations:
+                - message: the S3 method needs s3.bucket and s3.secretRef
+                  rule: '!has(self.enabled) || !self.enabled || !has(self.method)
+                    || self.method != ''S3'' || (has(self.s3) && has(self.s3.bucket)
+                    && has(self.s3.secretRef))'
               env:
                 description: Env adds or overrides environment variables of the rgstr
                   container.

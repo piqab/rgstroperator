@@ -40,8 +40,8 @@ type RegistryReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
-	// ProbeVersion reads the running version; nil: HTTP to /healthz.
-	ProbeVersion VersionProber
+	// ProbeHealth reads rgstr's /healthz (version, last backup); nil: HTTP.
+	ProbeHealth HealthProber
 }
 
 // +kubebuilder:rbac:groups=registry.rgstr.io,resources=registries,verbs=get;list;watch;create;update;patch;delete
@@ -101,6 +101,12 @@ func (r *RegistryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		setCondition(reg, CondAuth, metav1.ConditionTrue, "SecretReady", "secret "+secret)
 	}
 
+	if extra, err := r.referencedChecksum(ctx, reg, s); err != nil {
+		fail(CondReady, "SecretMissing", err)
+	} else if extra != "" {
+		checksum += "-" + extra
+	}
+
 	var dep *appsv1.Deployment
 	if len(errs) == 0 { // never start rgstr without its volume or secret
 		if dep, err = r.reconcileDeployment(ctx, reg, s, claim, secret, checksum); err != nil {
@@ -153,7 +159,7 @@ func (r *RegistryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	r.summarise(reg, s, dep, len(errs) > 0)
-	r.observeVersion(ctx, reg, s)
+	r.observeHealth(ctx, reg, s)
 	if err := r.Status().Update(ctx, reg); err != nil {
 		errs = append(errs, err)
 	}
@@ -195,8 +201,8 @@ func (r *RegistryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.Ingress{}).
-		// A user-provided auth Secret changed: reconcile the Registries
-		// referencing it (its checksum restarts rgstr).
+		// A Secret a Registry reads changed (auth, LDAP, OIDC, S3 keys):
+		// reconcile the Registries referencing it (its checksum restarts rgstr).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.registriesForSecret)).
 		Complete(r)
 }
@@ -209,7 +215,11 @@ func (r *RegistryReconciler) registriesForSecret(ctx context.Context, obj client
 	var out []reconcile.Request
 	for _, reg := range list.Items {
 		ref := reg.Spec.Auth.SecretRef
-		if (ref != nil && ref.Name == obj.GetName()) || reg.Name+authSecretSuffix == obj.GetName() {
+		used := (ref != nil && ref.Name == obj.GetName()) || reg.Name+authSecretSuffix == obj.GetName()
+		for _, name := range referencedSecrets(withDefaults(&reg)) {
+			used = used || name == obj.GetName()
+		}
+		if used {
 			out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&reg)})
 		}
 	}

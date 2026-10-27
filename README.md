@@ -8,17 +8,18 @@ Kubernetes-оператор для [rgstr](https://github.com/piqab/rgstr), ми
 
 - **хранилище:** `PersistentVolumeClaim` с данными, который по умолчанию переживает удаление ресурса;
 - **секрет аутентификации:** ключ подписи токенов и временный пароль первого администратора генерируются сами;
+- **вход через LDAP / Active Directory и единый вход (OIDC)** с ролями по группам;
 - **Deployment и Service** rgstr;
 - **Ingress** с TLS, в том числе через cert-manager;
 - **метрики** Prometheus и `ServiceMonitor`;
-- **резервные копии** тома: CSI `VolumeSnapshot` по расписанию или `RecurringJob` в Longhorn.
+- **резервные копии:** в S3 силами самого rgstr (без CSI-драйвера), CSI `VolumeSnapshot` по расписанию или `RecurringJob` в Longhorn.
 
 Состояние реестра (фаза, URL, версия rgstr, последняя копия) видно в `kubectl get registry`.
 
 ```
 $ kubectl get rgstr
 NAME          PHASE     READY   VERSION   URL                            IMAGE                       AGE
-my-registry   Running   true    v1.7.0    https://registry.example.com   ghcr.io/piqab/rgstr:1.7.0   5m
+my-registry   Running   true    v1.8.0    https://registry.example.com   ghcr.io/piqab/rgstr:1.8.0   5m
 ```
 
 ## Установка
@@ -79,7 +80,7 @@ kubectl port-forward svc/my-registry 5000:5000
 
 | Поле | По умолчанию | Описание |
 |---|---|---|
-| `image` | `ghcr.io/piqab/rgstr:1.7.0` | Образ rgstr. По умолчанию это релиз, с которым протестирована эта версия оператора |
+| `image` | `ghcr.io/piqab/rgstr:1.8.0` | Образ rgstr. По умолчанию это релиз, с которым протестирована эта версия оператора |
 | `imagePullPolicy`, `imagePullSecrets` | `IfNotPresent` | Скачивание образа rgstr |
 | `replicas` | `1` | `1` запускает реестр, `0` останавливает. rgstr работает одним процессом на том, поэтому больше одной реплики не бывает |
 | `port` | `5000` | Порт rgstr и Service |
@@ -96,6 +97,8 @@ kubectl port-forward svc/my-registry 5000:5000
 | `auth.tokenTTL` | как в rgstr | Время жизни токенов `docker login` |
 | `auth.sessionTTL` | как в rgstr (12h) | Время жизни сессий веб-админки |
 | `auth.realm` | `<URL>/v2/auth` | URL токен-эндпоинта |
+| `auth.ldap.*` | — | Вход по паролю LDAP / AD, см. [LDAP](#ldap-и-active-directory) |
+| `auth.oidc.*` | — | Вход в веб-админку через OpenID Connect, см. [Единый вход](#единый-вход-oidc) |
 | `gcInterval` | `1h` | Интервал сборки мусора, `0` выключает её |
 | `uploadTTL` | `24h` | Время жизни незавершённых загрузок |
 | `publicRepos` | — | Glob-паттерны репозиториев с анонимным pull, например `public/**` |
@@ -140,7 +143,45 @@ auth:
   secretRef: {name: my-registry-auth}
 ```
 
-При изменении Secret оператор перезапускает rgstr.
+При изменении Secret оператор перезапускает rgstr. То же для Secret-ов, на которые ссылаются `auth.ldap`, `auth.oidc` и `backup.s3`.
+
+### LDAP и Active Directory
+
+docker login и веб-админка принимают пароль из каталога. Пользователи появляются в rgstr при первом входе; локальные пользователи (первый администратор, `RGSTR_USERS`, созданные в админке) всегда главнее одноимённых из каталога.
+
+```yaml
+auth:
+  enabled: true
+  ldap:
+    url: ldaps://dc1.corp.example:636
+    bindDN: CN=svc-rgstr,OU=Service,DC=corp,DC=example
+    bindPasswordSecretRef: {name: rgstr-ldap, key: password}
+    baseDN: DC=corp,DC=example
+    userFilter: (&(objectClass=user)(sAMAccountName=%s))
+    adminGroups: [Registry-Admins]
+    allowedGroups: [Developers]      # кого вообще пускать
+    # readOnlyGroups: [...]
+    # defaultRole: user
+```
+
+Для OpenLDAP без `memberOf` задайте `groupFilter: (&(objectClass=groupOfNames)(member=%s))` и `groupBaseDN`. Все поля и примеры есть в [README rgstr](https://github.com/piqab/rgstr#ldap-и-active-directory).
+
+### Единый вход (OIDC)
+
+На странице входа появляется кнопка «Войти через …». Адрес возврата по умолчанию `<status.url>/ui/oidc/callback`, его нужно зарегистрировать у провайдера.
+
+```yaml
+auth:
+  enabled: true
+  oidc:
+    issuer: https://sso.example.com/realms/main
+    clientID: rgstr
+    clientSecretRef: {name: rgstr-oidc, key: client-secret}
+    displayName: Keycloak
+    adminGroups: [registry-admins]
+```
+
+Docker не умеет входить через браузер: пользователь SSO создаёт в веб-админке **CLI-секрет** (кнопка в шапке) и использует его как пароль в `docker login`.
 
 ## Ingress и TLS
 
@@ -177,6 +218,35 @@ metrics:
 
 Копируется весь том: образы, пользователи, метаданные и журнал. Копии не принадлежат `Registry` и не удаляются вместе с ним.
 
+| Метод | Что нужно в кластере | Где копии |
+|---|---|---|
+| `S3` | ничего, только бакет | в S3-совместимом хранилище, вне кластера |
+| `VolumeSnapshot` | CSI-драйвер со snapshot-ами и external-snapshotter | обычно в той же системе хранения |
+| `Longhorn` | Longhorn | backup target Longhorn (`task: backup`) или локально (`task: snapshot`) |
+
+### S3 (делает сам rgstr)
+
+```yaml
+backup:
+  enabled: true
+  method: S3
+  schedule: "0 3 * * *"            # cron, UTC
+  keep: 7
+  s3:
+    bucket: backups                # создайте заранее
+    prefix: rgstr/prod
+    endpoint: https://storage.yandexcloud.net   # пусто: AWS S3
+    region: ru-central1
+    secretRef: {name: rgstr-s3}    # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+```
+
+```bash
+kubectl create secret generic rgstr-s3 \
+  --from-literal=AWS_ACCESS_KEY_ID=... --from-literal=AWS_SECRET_ACCESS_KEY=...
+```
+
+rgstr сам архивирует данные по расписанию на работающем реестре и удаляет копии сверх `keep`. Копии целостные: на время бэкапа сборка мусора ждёт. Подойдёт любое S3-совместимое хранилище: AWS, MinIO, Ceph, SeaweedFS, Yandex Object Storage, R2. Время последней копии оператор берёт из `/healthz` rgstr в `status.lastBackupTime`. Если очередная копия опоздала больше чем на час, условие `BackupReady` становится `False` с причиной `Overdue`. Список копий и кнопка «Сделать бэкап сейчас» есть в веб-админке на странице «Бэкапы».
+
 ### VolumeSnapshot (любой CSI-драйвер со snapshot-ами)
 
 ```yaml
@@ -211,7 +281,43 @@ backup:
 
 ### Восстановление
 
-Создайте PVC из копии и укажите его в `storage.existingClaim`.
+Из S3: остановите реестр и запустите Job с `rgstr restore` на том же томе, затем запустите реестр снова.
+
+```bash
+kubectl patch registry my-registry --type merge -p '{"spec":{"replicas":0}}'
+kubectl apply -f restore-job.yaml
+kubectl wait --for=condition=complete job/my-registry-restore --timeout=1h
+kubectl patch registry my-registry --type merge -p '{"spec":{"replicas":1}}'
+```
+
+`restore-job.yaml`:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata: {name: my-registry-restore}
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: restore
+          image: ghcr.io/piqab/rgstr:1.8.0
+          args: [restore, -force, latest]   # или имя: rgstr-backup-20261027-030000.tar
+          env:
+            - {name: RGSTR_BACKUP_TARGET, value: s3://backups/rgstr/prod}
+            - {name: RGSTR_BACKUP_S3_ENDPOINT, value: https://storage.yandexcloud.net}
+            - {name: RGSTR_BACKUP_S3_REGION, value: ru-central1}
+          envFrom: [{secretRef: {name: rgstr-s3}}]
+          volumeMounts: [{name: data, mountPath: /data}]
+      volumes:
+        - {name: data, persistentVolumeClaim: {claimName: my-registry-data}}
+```
+
+С `-force` прежние данные переносятся в `.before-restore-<время>/` на томе. Когда восстановление проверено, их можно удалить. Восстановить можно и в новый пустой PVC без `-force`, а потом указать его в `storage.existingClaim`.
+
+Из VolumeSnapshot или Longhorn: создайте PVC из копии и укажите его в `storage.existingClaim`.
 
 Из VolumeSnapshot:
 
@@ -252,7 +358,7 @@ kubectl describe registry my-registry     # условия и события
 | `AuthReady` | Секрет аутентификации на месте |
 | `IngressReady` | Ingress получил адрес |
 | `MetricsReady` | ServiceMonitor создан |
-| `BackupReady` | Расписание копий работает |
+| `BackupReady` | Расписание копий работает; `False` с причиной `Overdue`, если S3-копия опоздала |
 
 `PHASE` принимает значения `Pending`, `Running`, `Stopped` (`replicas: 0`) или `Degraded` (одна из частей не удалась, причина есть в условиях и событиях).
 
