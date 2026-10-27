@@ -28,4 +28,5 @@ cp config/crd/bases/registry.rgstr.io_registries.yaml "$chart/crds/"
       -e 's|^  name: rgstroperator-manager-role$|  name: {{ include "rgstroperator.name" . }}\n  labels: {{- include "rgstroperator.labels" . \| nindent 4 }}|' \
       config/rbac/role.yaml
 } > "$chart/templates/clusterrole.yaml"
-sed -i -e "s/^version: .*/version: ${version}/" -e "s/^appVersion: .*/appVersion: \"${version}\"/" "$chart/Chart.yaml"
+sed -i -e "s/^version: .*/version: ${version}/" -e "s/^appVersion: .*/appVersion: \"${version}\"/" \
+    -e "s|image: ghcr.io/piqab/rgstroperator:.*|image: ghcr.io/piqab/rgstroperator:${version}|" "$chart/Chart.yaml"

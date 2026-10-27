@@ -3,11 +3,44 @@ name: rgstroperator
 description: Kubernetes operator for rgstr, a minimal OCI/Docker container registry
 type: application
 # version and appVersion are set from VERSION by `make bundle`.
-version: 0.2.0
-appVersion: "0.2.0"
+version: 0.2.1
+appVersion: "0.2.1"
 home: https://github.com/piqab/rgstroperator
+icon: https://raw.githubusercontent.com/piqab/rgstroperator/main/docs/icon.png
 sources:
   - https://github.com/piqab/rgstroperator
   - https://github.com/piqab/rgstr
-keywords: [registry, oci, docker, operator]
-license: MIT
+keywords: [registry, oci, docker, container-registry, operator]
+maintainers:
+  - name: piqab
+    url: https://github.com/piqab
+# Artifact Hub (https://artifacthub.io/docs/topics/annotations/helm/).
+# The image tag is set from VERSION by `make bundle`.
+annotations:
+  artifacthub.io/license: MIT
+  artifacthub.io/category: integration-delivery
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Full Lifecycle
+  artifacthub.io/links: |
+    - name: rgstr
+      url: https://github.com/piqab/rgstr
+  artifacthub.io/images: |
+    - name: rgstroperator
+      image: ghcr.io/piqab/rgstroperator:0.2.1
+      platforms: [linux/amd64, linux/arm64]
+  artifacthub.io/crds: |
+    - kind: Registry
+      version: v1alpha1
+      name: registries.registry.rgstr.io
+      displayName: Registry
+      description: An rgstr container registry with its volume, Service, Ingress, metrics and backups.
+  artifacthub.io/crdsExamples: |
+    - apiVersion: registry.rgstr.io/v1alpha1
+      kind: Registry
+      metadata:
+        name: my-registry
+      spec:
+        storage:
+          size: 20Gi
+        auth:
+          enabled: true
