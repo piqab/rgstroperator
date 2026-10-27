@@ -19,7 +19,7 @@ Kubernetes-оператор для [rgstr](https://github.com/piqab/rgstr), ми
 ```
 $ kubectl get rgstr
 NAME          PHASE     READY   VERSION   URL                            IMAGE                       AGE
-my-registry   Running   true    v1.8.0    https://registry.example.com   ghcr.io/piqab/rgstr:1.8.0   5m
+my-registry   Running   true    v1.9.0    https://registry.example.com   ghcr.io/piqab/rgstr:1.9.0   5m
 ```
 
 ## Установка
@@ -80,7 +80,7 @@ kubectl port-forward svc/my-registry 5000:5000
 
 | Поле | По умолчанию | Описание |
 |---|---|---|
-| `image` | `ghcr.io/piqab/rgstr:1.8.0` | Образ rgstr. По умолчанию это релиз, с которым протестирована эта версия оператора |
+| `image` | `ghcr.io/piqab/rgstr:1.9.0` | Образ rgstr. По умолчанию это релиз, с которым протестирована эта версия оператора |
 | `imagePullPolicy`, `imagePullSecrets` | `IfNotPresent` | Скачивание образа rgstr |
 | `replicas` | `1` | `0` останавливает реестр. Больше одной — только в [режиме кластера](#кластер-ha) |
 | `database.urlSecretRef` | — | PostgreSQL: включает [режим кластера](#кластер-ha) |
@@ -345,7 +345,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: restore
-          image: ghcr.io/piqab/rgstr:1.8.0
+          image: ghcr.io/piqab/rgstr:1.9.0
           args: [restore, -force, latest]   # или имя: rgstr-backup-20261027-030000.tar
           env:
             - {name: RGSTR_BACKUP_TARGET, value: s3://backups/rgstr/prod}

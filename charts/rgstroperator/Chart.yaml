@@ -3,8 +3,8 @@ name: rgstroperator
 description: Kubernetes operator for rgstr, a minimal OCI/Docker container registry
 type: application
 # version and appVersion are set from VERSION by `make bundle`.
-version: 0.3.0
-appVersion: "0.3.0"
+version: 0.4.0
+appVersion: "0.4.0"
 home: https://github.com/piqab/rgstroperator
 icon: https://raw.githubusercontent.com/piqab/rgstroperator/main/docs/icon.png
 sources:
@@ -26,7 +26,7 @@ annotations:
       url: https://github.com/piqab/rgstr
   artifacthub.io/images: |
     - name: rgstroperator
-      image: ghcr.io/piqab/rgstroperator:0.3.0
+      image: ghcr.io/piqab/rgstroperator:0.4.0
       platforms: [linux/amd64, linux/arm64]
   artifacthub.io/crds: |
     - kind: Registry
