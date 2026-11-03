@@ -12,9 +12,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26"
           check-latest: true
@@ -47,16 +47,16 @@ jobs:
       matrix:
         install: [kubectl, helm]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # rgstr is built from source, so the operator is tested against the
       # registry version it defaults to even before that image is published.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: piqab/rgstr
           path: rgstr
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26"
           check-latest: true
@@ -73,14 +73,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: piqab/rgstr
           path: rgstr
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.26"
           check-latest: true
